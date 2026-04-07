@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { questions as allQuestions } from "./questions";
 
 const SCORE_STORAGE_KEY = "chatgptusmle_attempt_history";
+const SESSION_STORAGE_KEY = "chatgptusmle_active_session";
 const FULL_EXAM_BLOCK_SIZE = 40;
 
 const UI_STORAGE_KEYS = {
@@ -129,6 +130,12 @@ function readStoredString(key, fallback) {
 function writeStoredString(key, value) {
   try {
     localStorage.setItem(key, value);
+  } catch {}
+}
+
+function clearActiveSession() {
+  try {
+    localStorage.removeItem(SESSION_STORAGE_KEY);
   } catch {}
 }
 
@@ -357,7 +364,7 @@ function DraggablePanel({
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("mouseup", onMouseUp);
     };
-  }, [setPosition]);
+  }, [setPosition, position.x, position.y]);
 
   return (
     <div
@@ -725,6 +732,8 @@ export default function App() {
     readStoredBool(UI_STORAGE_KEYS.labsMinimized, false)
   );
 
+  const [resumeLoaded, setResumeLoaded] = useState(false);
+
   const stemRef = useRef(null);
 
   useEffect(() => {
@@ -774,6 +783,109 @@ export default function App() {
       console.error("Failed to load attempt history:", error);
     }
   }, []);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(SESSION_STORAGE_KEY);
+      if (!raw) {
+        setResumeLoaded(true);
+        return;
+      }
+      const session = JSON.parse(raw);
+      if (!session || session.finished) {
+        clearActiveSession();
+        setResumeLoaded(true);
+        return;
+      }
+
+      setScreen(session.screen || "test");
+      setMode(session.mode || "custom");
+      setBlockSize(session.blockSize ?? 5);
+      setSubjectFilter(session.subjectFilter || "All");
+      setStarted(!!session.started);
+      setFinished(!!session.finished);
+      setShowReview(!!session.showReview);
+      setReviewMode(session.reviewMode || "all");
+      setSelectedQuestions(session.selectedQuestions || []);
+      setAllExamQuestions(session.allExamQuestions || []);
+      setTimeLeft(session.timeLeft ?? 0);
+      setCurrent(session.current ?? 0);
+      setAnswers(session.answers || {});
+      setHighlights(session.highlights || {});
+      setCrossedOutChoices(session.crossedOutChoices || {});
+      setFlaggedQuestions(session.flaggedQuestions || {});
+      setWasCancelled(!!session.wasCancelled);
+      setCurrentBlockIndex(session.currentBlockIndex ?? 0);
+      setBlockTransition(!!session.blockTransition);
+      setCalculatorOpen(!!session.calculatorOpen);
+      setLabsOpen(!!session.labsOpen);
+    } catch {
+      clearActiveSession();
+    } finally {
+      setResumeLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!resumeLoaded) return;
+
+    const shouldPersist =
+      started && !finished && (screen === "test" || screen === "summary");
+
+    if (!shouldPersist) {
+      clearActiveSession();
+      return;
+    }
+
+    const session = {
+      screen,
+      mode,
+      blockSize,
+      subjectFilter,
+      started,
+      finished,
+      showReview,
+      reviewMode,
+      selectedQuestions,
+      allExamQuestions,
+      timeLeft,
+      current,
+      answers,
+      highlights,
+      crossedOutChoices,
+      flaggedQuestions,
+      wasCancelled,
+      currentBlockIndex,
+      blockTransition,
+      calculatorOpen,
+      labsOpen,
+    };
+
+    writeStoredJson(SESSION_STORAGE_KEY, session);
+  }, [
+    resumeLoaded,
+    screen,
+    mode,
+    blockSize,
+    subjectFilter,
+    started,
+    finished,
+    showReview,
+    reviewMode,
+    selectedQuestions,
+    allExamQuestions,
+    timeLeft,
+    current,
+    answers,
+    highlights,
+    crossedOutChoices,
+    flaggedQuestions,
+    wasCancelled,
+    currentBlockIndex,
+    blockTransition,
+    calculatorOpen,
+    labsOpen,
+  ]);
 
   useEffect(() => {
     if (!started || finished || blockTransition || screen !== "test") return;
@@ -943,6 +1055,7 @@ export default function App() {
     setCalculatorOpen(false);
     setLabsOpen(false);
     setScreen("home");
+    clearActiveSession();
   };
 
   const cancelTest = () => {
@@ -960,6 +1073,7 @@ export default function App() {
   useEffect(() => {
     if (!finished || !started) return;
     saveAttempt(wasCancelled);
+    clearActiveSession();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [finished]);
 
@@ -991,6 +1105,21 @@ export default function App() {
     if (current > 0) setCurrent((c) => c - 1);
   };
 
+  const confirmBeforeSubmit = () => {
+    if (unansweredCountCurrentBlock === 0) {
+      finishCurrentBlock(false);
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `You still have ${unansweredCountCurrentBlock} unanswered question${
+        unansweredCountCurrentBlock === 1 ? "" : "s"
+      }. Submit anyway?`
+    );
+
+    if (confirmed) finishCurrentBlock(false);
+  };
+
   const finishCurrentBlock = (forceCancelled) => {
     const cancelled = forceCancelled || false;
 
@@ -1017,6 +1146,7 @@ export default function App() {
     }
 
     setBlockTransition(true);
+    clearActiveSession();
   };
 
   const startNextBlock = () => {
@@ -1111,6 +1241,86 @@ export default function App() {
       [currentQuestion.id]: {},
     }));
   };
+
+  useEffect(() => {
+    if (screen !== "test" || !currentQuestion) return;
+
+    const onKeyDown = (e) => {
+      const tag = document.activeElement?.tagName;
+      const isTyping =
+        tag === "INPUT" || tag === "TEXTAREA" || document.activeElement?.isContentEditable;
+
+      if (isTyping) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      const key = e.key.toUpperCase();
+      const optionLetters = Object.keys(currentQuestion.options || {}).map((x) =>
+        x.toUpperCase()
+      );
+
+      if (["A", "B", "C", "D", "E", "F"].includes(key) && optionLetters.includes(key)) {
+        e.preventDefault();
+        chooseAnswer(key);
+        return;
+      }
+
+      if (key === "[" ) {
+        e.preventDefault();
+        prevQuestion();
+        return;
+      }
+
+      if (key === "]") {
+        e.preventDefault();
+        if (current < selectedQuestions.length - 1) {
+          goToNextQuestion();
+        } else {
+          setScreen("summary");
+          setCalculatorOpen(false);
+          setLabsOpen(false);
+        }
+        return;
+      }
+
+      if (key === "F" && !optionLetters.includes("F")) {
+        e.preventDefault();
+        toggleFlag();
+        return;
+      }
+
+      if (key === "S") {
+        e.preventDefault();
+        setScreen("summary");
+        setCalculatorOpen(false);
+        setLabsOpen(false);
+        return;
+      }
+
+      if (key === "L") {
+        e.preventDefault();
+        setLabsOpen((prev) => !prev);
+        return;
+      }
+
+      if (key === "C" && !optionLetters.includes("C")) {
+        e.preventDefault();
+        setCalculatorOpen((prev) => !prev);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [screen, currentQuestion, current, selectedQuestions.length]);
+
+  if (!resumeLoaded) {
+    return (
+      <div style={styles.page}>
+        <div style={styles.card}>
+          <h1 style={styles.title}>Loading…</h1>
+        </div>
+      </div>
+    );
+  }
 
   if (screen === "home") {
     return (
@@ -1253,7 +1463,7 @@ export default function App() {
           setScreen("test");
         }}
         onBack={() => setScreen("test")}
-        onSubmit={() => finishCurrentBlock(false)}
+        onSubmit={confirmBeforeSubmit}
         mode={mode}
       />
     );
@@ -1491,6 +1701,10 @@ export default function App() {
           <div style={styles.counterBadge}>Answered: {answeredCountCurrentBlock}</div>
           <div style={styles.counterBadge}>Unanswered: {unansweredCountCurrentBlock}</div>
           <div style={styles.counterBadge}>Flagged: {flaggedCountCurrentBlock}</div>
+        </div>
+
+        <div style={styles.keyboardHint}>
+          Shortcuts: A–F answer • [ previous • ] next • S summary • L labs • C calculator
         </div>
 
         <div style={styles.progressBarOuter}>
@@ -1820,6 +2034,12 @@ const styles = {
     color: "#555",
     marginBottom: "12px",
     fontSize: "1.1rem",
+  },
+  keyboardHint: {
+    textAlign: "center",
+    color: "#64748b",
+    fontSize: "0.9rem",
+    marginBottom: "12px",
   },
   countersRow: {
     display: "flex",
