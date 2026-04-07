@@ -16,71 +16,124 @@ function shuffleArray(array) {
   return copy;
 }
 
-function escapeHtml(str) {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-function renderStemWithHighlights(stem, highlights = []) {
-  if (!highlights.length) {
-    return escapeHtml(stem).replace(/\n/g, "<br />");
-  }
-
-  const sorted = [...highlights]
-    .filter((h) => h.start < h.end)
+function mergeHighlightRanges(ranges) {
+  if (!ranges.length) return [];
+  const sorted = [...ranges]
+    .filter((r) => r.start < r.end)
     .sort((a, b) => a.start - b.start);
 
-  let html = "";
-  let cursor = 0;
+  const merged = [sorted[0]];
 
-  for (const h of sorted) {
-    if (h.start > cursor) {
-      html += escapeHtml(stem.slice(cursor, h.start));
+  for (let i = 1; i < sorted.length; i++) {
+    const current = sorted[i];
+    const last = merged[merged.length - 1];
+
+    if (current.start <= last.end) {
+      last.end = Math.max(last.end, current.end);
+    } else {
+      merged.push({ ...current });
     }
-
-    html += `<mark style="background:#fde68a; padding:1px 2px; border-radius:3px;">${escapeHtml(
-      stem.slice(h.start, h.end)
-    )}</mark>`;
-
-    cursor = h.end;
   }
 
-  if (cursor < stem.length) {
-    html += escapeHtml(stem.slice(cursor));
-  }
-
-  return html.replace(/\n/g, "<br />");
+  return merged;
 }
 
-function getTextOffset(root, targetNode, targetOffset) {
-  let count = 0;
+function getTextNodesIn(root) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  let node;
 
-  function walk(node) {
+  while ((node = walker.nextNode())) {
+    nodes.push(node);
+  }
+
+  return nodes;
+}
+
+function getAbsoluteOffset(root, targetNode, targetOffset) {
+  const textNodes = getTextNodesIn(root);
+  let total = 0;
+
+  for (const node of textNodes) {
     if (node === targetNode) {
-      count += targetOffset;
-      throw new Error("FOUND");
+      return total + targetOffset;
     }
-
-    if (node.nodeType === Node.TEXT_NODE) {
-      count += node.textContent.length;
-      return;
-    }
-
-    for (const child of node.childNodes) {
-      walk(child);
-    }
+    total += node.textContent.length;
   }
 
-  try {
-    walk(root);
-  } catch (e) {
-    if (e.message === "FOUND") return count;
-    throw e;
-  }
+  return total;
+}
 
-  return count;
+function HighlightedStem({ stem, highlights, stemRef, onMouseUp, style }) {
+  const merged = mergeHighlightRanges(highlights || []);
+  const lines = stem.split("\n");
+
+  let globalIndex = 0;
+
+  return (
+    <div
+      ref={stemRef}
+      style={style}
+      onMouseUp={onMouseUp}
+    >
+      {lines.map((line, lineIndex) => {
+        const lineStart = globalIndex;
+        const lineEnd = lineStart + line.length;
+        globalIndex = lineEnd + 1;
+
+        const pieces = [];
+        let cursor = lineStart;
+
+        const relevant = merged.filter(
+          (h) => h.end > lineStart && h.start < lineEnd
+        );
+
+        for (const h of relevant) {
+          const start = Math.max(h.start, lineStart);
+          const end = Math.min(h.end, lineEnd);
+
+          if (start > cursor) {
+            pieces.push({
+              type: "plain",
+              text: stem.slice(cursor, start),
+            });
+          }
+
+          pieces.push({
+            type: "highlight",
+            text: stem.slice(start, end),
+          });
+
+          cursor = end;
+        }
+
+        if (cursor < lineEnd) {
+          pieces.push({
+            type: "plain",
+            text: stem.slice(cursor, lineEnd),
+          });
+        }
+
+        if (pieces.length === 0) {
+          pieces.push({ type: "plain", text: "" });
+        }
+
+        return (
+          <div key={lineIndex}>
+            {pieces.map((piece, pieceIndex) =>
+              piece.type === "highlight" ? (
+                <mark key={pieceIndex} style={styles.mark}>
+                  {piece.text}
+                </mark>
+              ) : (
+                <span key={pieceIndex}>{piece.text}</span>
+              )
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 export default function App() {
@@ -218,12 +271,19 @@ export default function App() {
       return;
     }
 
-    const start = getTextOffset(
+    if (
+      range.startContainer.nodeType !== Node.TEXT_NODE ||
+      range.endContainer.nodeType !== Node.TEXT_NODE
+    ) {
+      return;
+    }
+
+    const start = getAbsoluteOffset(
       stemRef.current,
       range.startContainer,
       range.startOffset
     );
-    const end = getTextOffset(
+    const end = getAbsoluteOffset(
       stemRef.current,
       range.endContainer,
       range.endOffset
@@ -236,13 +296,13 @@ export default function App() {
       end: Math.max(start, end),
     };
 
-    setHighlights((prev) => {
-      const existing = prev[currentQuestion.id] || [];
-      return {
-        ...prev,
-        [currentQuestion.id]: [...existing, normalized],
-      };
-    });
+    setHighlights((prev) => ({
+      ...prev,
+      [currentQuestion.id]: mergeHighlightRanges([
+        ...(prev[currentQuestion.id] || []),
+        normalized,
+      ]),
+    }));
 
     selection.removeAllRanges();
   };
@@ -398,14 +458,10 @@ export default function App() {
                     Question {idx + 1} • {q.subject}
                   </h2>
 
-                  <div
+                  <HighlightedStem
+                    stem={q.stem}
+                    highlights={highlights[q.id] || []}
                     style={styles.stem}
-                    dangerouslySetInnerHTML={{
-                      __html: renderStemWithHighlights(
-                        q.stem,
-                        highlights[q.id] || []
-                      ),
-                    }}
                   />
 
                   <div style={styles.optionsWrap}>
@@ -478,16 +534,12 @@ export default function App() {
           </div>
         </div>
 
-        <div
-          ref={stemRef}
-          style={styles.stem}
+        <HighlightedStem
+          stem={currentQuestion.stem}
+          highlights={highlights[currentQuestion.id] || []}
+          stemRef={stemRef}
           onMouseUp={handleStemMouseUp}
-          dangerouslySetInnerHTML={{
-            __html: renderStemWithHighlights(
-              currentQuestion.stem,
-              highlights[currentQuestion.id] || []
-            ),
-          }}
+          style={styles.stem}
         />
 
         <div style={styles.optionsWrap}>
@@ -638,6 +690,11 @@ const styles = {
     lineHeight: 1.7,
     color: "#222",
     marginBottom: "28px",
+  },
+  mark: {
+    background: "#fde68a",
+    padding: "1px 2px",
+    borderRadius: "3px",
   },
   optionsWrap: {
     display: "flex",
