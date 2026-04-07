@@ -4,6 +4,76 @@ import { questions as allQuestions } from "./questions";
 const SCORE_STORAGE_KEY = "chatgptusmle_attempt_history";
 const FULL_EXAM_BLOCK_SIZE = 40;
 
+const LAB_SECTIONS = [
+  {
+    title: "Serum / Chemistry",
+    items: [
+      ["Sodium (Na+)", "136–146 mEq/L"],
+      ["Potassium (K+)", "3.5–5.0 mEq/L"],
+      ["Chloride (Cl−)", "95–105 mEq/L"],
+      ["Bicarbonate (HCO3−)", "22–28 mEq/L"],
+      ["Urea nitrogen", "7–18 mg/dL"],
+      ["Creatinine", "0.6–1.2 mg/dL"],
+      ["Glucose, fasting", "70–100 mg/dL"],
+      ["Calcium", "8.4–10.2 mg/dL"],
+      ["Magnesium", "1.5–2.0 mg/dL"],
+      ["Phosphorus", "3.0–4.5 mg/dL"],
+      ["AST", "12–38 U/L"],
+      ["ALT", "10–40 U/L"],
+      ["Alkaline phosphatase", "25–100 U/L"],
+      ["Total bilirubin", "0.1–1.0 mg/dL"],
+      ["Direct bilirubin", "0.0–0.3 mg/dL"],
+      ["Albumin", "3.5–5.5 g/dL"],
+    ],
+  },
+  {
+    title: "Hematology",
+    items: [
+      ["WBC", "4,500–11,000/mm³"],
+      ["Hemoglobin, male", "13.5–17.5 g/dL"],
+      ["Hemoglobin, female", "12.0–16.0 g/dL"],
+      ["Hematocrit, male", "41%–53%"],
+      ["Hematocrit, female", "36%–46%"],
+      ["MCV", "80–100 fL"],
+      ["Platelets", "150,000–400,000/mm³"],
+      ["PTT", "25–40 sec"],
+      ["PT", "11–15 sec"],
+      ["Reticulocytes", "0.5%–1.5%"],
+      ["Troponin I", "≤0.04 ng/mL"],
+    ],
+  },
+  {
+    title: "ABG",
+    items: [
+      ["pH", "7.35–7.45"],
+      ["PCO2", "33–45 mm Hg"],
+      ["PO2", "75–105 mm Hg"],
+    ],
+  },
+  {
+    title: "Endocrine",
+    items: [
+      ["TSH", "0.4–4.0 mIU/L"],
+      ["T3", "100–200 ng/dL"],
+      ["T4", "5–12 μg/dL"],
+      ["Free T4", "0.9–1.7 ng/dL"],
+      ["Cortisol, 0800 h", "5–23 μg/dL"],
+      ["Prolactin, male", "<17 ng/mL"],
+      ["Prolactin, female", "<25 ng/mL"],
+      ["Intact PTH", "10–60 pg/mL"],
+    ],
+  },
+  {
+    title: "CSF",
+    items: [
+      ["Cell count", "0–5/mm³"],
+      ["Glucose", "40–70 mg/dL"],
+      ["Protein, total", "<40 mg/dL"],
+      ["Pressure", "70–180 mm H2O"],
+    ],
+  },
+];
+
 function formatTime(totalSeconds) {
   const m = Math.floor(totalSeconds / 60);
   const s = totalSeconds % 60;
@@ -71,14 +141,14 @@ function getAbsoluteOffset(root, targetNode, targetOffset) {
   return total;
 }
 
-function getDisplayStem(stem) {
-  return stem.replace(/\[IMAGE\]/g, "");
-}
-
 function getQuestionImageSrc(question) {
   if (question.image) return question.image;
   if (question.hasImage) return `/images/question${question.id}.png`;
   return null;
+}
+
+function startIndexWithinSegment(absoluteIndex, baseOffset) {
+  return absoluteIndex - baseOffset;
 }
 
 function StemTextSegment({ text, highlights, baseOffset }) {
@@ -158,10 +228,6 @@ function StemTextSegment({ text, highlights, baseOffset }) {
   );
 }
 
-function startIndexWithinSegment(absoluteIndex, baseOffset) {
-  return absoluteIndex - baseOffset;
-}
-
 function InlineStemWithImage({
   stem,
   image,
@@ -202,6 +268,192 @@ function InlineStemWithImage({
   );
 }
 
+function FloatingCalculator({ isOpen, onClose }) {
+  const [display, setDisplay] = useState("");
+
+  const appendValue = (value) => setDisplay((prev) => prev + value);
+  const clearDisplay = () => setDisplay("");
+  const backspace = () => setDisplay((prev) => prev.slice(0, -1));
+
+  const calculate = () => {
+    try {
+      // eslint-disable-next-line no-new-func
+      const result = Function(`"use strict"; return (${display})`)();
+      setDisplay(String(result));
+    } catch {
+      setDisplay("Error");
+    }
+  };
+
+  if (!isOpen) return null;
+
+  const buttons = [
+    ["7", "8", "9", "/"],
+    ["4", "5", "6", "*"],
+    ["1", "2", "3", "-"],
+    ["0", ".", "(", ")"],
+  ];
+
+  return (
+    <div style={styles.floatingCalculator}>
+      <div style={styles.panelHeader}>
+        <h3 style={{ margin: 0 }}>Calculator</h3>
+        <button onClick={onClose} style={styles.panelCloseButton}>
+          ×
+        </button>
+      </div>
+
+      <div style={styles.calculatorDisplay}>{display || "0"}</div>
+
+      <div style={styles.calculatorGrid}>
+        {buttons.flat().map((btn) => (
+          <button
+            key={btn}
+            onClick={() => appendValue(btn)}
+            style={styles.calcButton}
+          >
+            {btn}
+          </button>
+        ))}
+        <button onClick={() => appendValue("+")} style={styles.calcButton}>
+          +
+        </button>
+        <button onClick={clearDisplay} style={styles.calcButton}>
+          C
+        </button>
+        <button onClick={backspace} style={styles.calcButton}>
+          ⌫
+        </button>
+        <button onClick={calculate} style={styles.calcEqualsButton}>
+          =
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function FloatingLabs({ isOpen, onClose }) {
+  const [openSection, setOpenSection] = useState("Serum / Chemistry");
+
+  if (!isOpen) return null;
+
+  return (
+    <div style={styles.floatingLabs}>
+      <div style={styles.panelHeader}>
+        <h3 style={{ margin: 0 }}>Reference Labs</h3>
+        <button onClick={onClose} style={styles.panelCloseButton}>
+          ×
+        </button>
+      </div>
+
+      <div style={styles.labsAccordion}>
+        {LAB_SECTIONS.map((section) => (
+          <div key={section.title}>
+            <button
+              onClick={() =>
+                setOpenSection((prev) =>
+                  prev === section.title ? "" : section.title
+                )
+              }
+              style={styles.labsSectionHeader}
+            >
+              {section.title}
+            </button>
+
+            {openSection === section.title && (
+              <div style={styles.labsSectionContent}>
+                {section.items.map(([name, value]) => (
+                  <div key={name} style={styles.labRow}>
+                    <span>{name}</span>
+                    <span>{value}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function BlockSummaryPage({
+  selectedQuestions,
+  answers,
+  flaggedQuestions,
+  currentQuestionId,
+  onGoToQuestion,
+  onBack,
+  onSubmit,
+  mode,
+}) {
+  return (
+    <div style={styles.page}>
+      <div style={styles.card}>
+        <h1 style={styles.title}>Block Summary</h1>
+        <p style={styles.info}>
+          Review unanswered and flagged questions before submitting this block.
+        </p>
+
+        <div style={styles.summaryLegend}>
+          <div style={styles.legendItem}>
+            <span style={{ ...styles.summaryChip, ...styles.summaryAnswered }} />
+            Answered
+          </div>
+          <div style={styles.legendItem}>
+            <span style={{ ...styles.summaryChip, ...styles.summaryUnanswered }} />
+            Unanswered
+          </div>
+          <div style={styles.legendItem}>
+            <span style={{ ...styles.summaryChip, ...styles.summaryFlagged }} />
+            Flagged
+          </div>
+          <div style={styles.legendItem}>
+            <span style={{ ...styles.summaryChip, ...styles.summaryCurrent }} />
+            Current
+          </div>
+        </div>
+
+        <div style={styles.summaryGrid}>
+          {selectedQuestions.map((q, index) => {
+            const answered = answers[q.id] != null;
+            const flagged = !!flaggedQuestions[q.id];
+            const current = q.id === currentQuestionId;
+
+            return (
+              <button
+                key={q.id}
+                onClick={() => onGoToQuestion(index)}
+                style={{
+                  ...styles.summaryQuestionButton,
+                  ...(answered ? styles.summaryAnswered : styles.summaryUnanswered),
+                  ...(flagged ? styles.summaryFlaggedBorder : {}),
+                  ...(current ? styles.summaryCurrentOutline : {}),
+                }}
+              >
+                <div style={styles.summaryQuestionNumber}>{index + 1}</div>
+                <div style={styles.summaryQuestionStatus}>
+                  {answered ? "Answered" : "Unanswered"}
+                  {flagged ? " • Flagged" : ""}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        <div style={styles.buttonRow}>
+          <button onClick={onBack} style={styles.secondaryButton}>
+            Back to Questions
+          </button>
+          <button onClick={onSubmit} style={styles.primaryButton}>
+            {mode === "full" ? "Finish Block" : "Submit Block"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [screen, setScreen] = useState("home");
   const [mode, setMode] = useState("custom");
@@ -221,11 +473,14 @@ export default function App() {
   const [answers, setAnswers] = useState({});
   const [highlights, setHighlights] = useState({});
   const [crossedOutChoices, setCrossedOutChoices] = useState({});
+  const [flaggedQuestions, setFlaggedQuestions] = useState({});
   const [wasCancelled, setWasCancelled] = useState(false);
   const [attemptHistory, setAttemptHistory] = useState([]);
 
   const [currentBlockIndex, setCurrentBlockIndex] = useState(0);
   const [blockTransition, setBlockTransition] = useState(false);
+  const [calculatorOpen, setCalculatorOpen] = useState(false);
+  const [labsOpen, setLabsOpen] = useState(false);
 
   const stemRef = useRef(null);
 
@@ -247,16 +502,14 @@ export default function App() {
   useEffect(() => {
     try {
       const saved = localStorage.getItem(SCORE_STORAGE_KEY);
-      if (saved) {
-        setAttemptHistory(JSON.parse(saved));
-      }
+      if (saved) setAttemptHistory(JSON.parse(saved));
     } catch (error) {
       console.error("Failed to load attempt history:", error);
     }
   }, []);
 
   useEffect(() => {
-    if (!started || finished || blockTransition) return;
+    if (!started || finished || blockTransition || screen !== "test") return;
     if (timeLeft <= 0) {
       finishCurrentBlock(false);
       return;
@@ -267,7 +520,7 @@ export default function App() {
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [started, finished, timeLeft, blockTransition]);
+  }, [started, finished, timeLeft, blockTransition, screen]);
 
   const currentQuestion = selectedQuestions[current];
 
@@ -289,16 +542,27 @@ export default function App() {
 
   const actualCustomBlockCount = Math.min(blockSize, filteredQuestions.length);
 
+  const answeredCountCurrentBlock = selectedQuestions.filter(
+    (q) => answers[q.id] != null
+  ).length;
+  const unansweredCountCurrentBlock =
+    selectedQuestions.length - answeredCountCurrentBlock;
+  const flaggedCountCurrentBlock = selectedQuestions.filter(
+    (q) => flaggedQuestions[q.id]
+  ).length;
+
   function buildInitialQuestionState(questions) {
     const initialHighlights = {};
     const initialCrossouts = {};
+    const initialFlags = {};
 
     questions.forEach((q) => {
       initialHighlights[q.id] = [];
       initialCrossouts[q.id] = {};
+      initialFlags[q.id] = false;
     });
 
-    return { initialHighlights, initialCrossouts };
+    return { initialHighlights, initialCrossouts, initialFlags };
   }
 
   function getBlockQuestions(examQuestions, blockIndex) {
@@ -318,6 +582,7 @@ export default function App() {
       blockSize: mode === "full" ? "Full exam" : selectedQuestions.length,
       cancelled,
       unanswered: allExamQuestions.filter((q) => answers[q.id] == null).length,
+      flagged: allExamQuestions.filter((q) => flaggedQuestions[q.id]).length,
       timeRemaining: timeLeft,
     };
 
@@ -334,7 +599,6 @@ export default function App() {
   const clearAttemptHistory = () => {
     const confirmed = window.confirm("Clear all saved score history?");
     if (!confirmed) return;
-
     setAttemptHistory([]);
     localStorage.removeItem(SCORE_STORAGE_KEY);
   };
@@ -343,13 +607,14 @@ export default function App() {
     if (mode === "custom") {
       const shuffled = shuffleArray(filteredQuestions);
       const chosen = shuffled.slice(0, actualCustomBlockCount);
-      const { initialHighlights, initialCrossouts } =
+      const { initialHighlights, initialCrossouts, initialFlags } =
         buildInitialQuestionState(chosen);
 
       setAllExamQuestions(chosen);
       setSelectedQuestions(chosen);
       setHighlights(initialHighlights);
       setCrossedOutChoices(initialCrossouts);
+      setFlaggedQuestions(initialFlags);
       setAnswers({});
       setCurrent(0);
       setFinished(false);
@@ -360,6 +625,8 @@ export default function App() {
       setCurrentBlockIndex(0);
       setTimeLeft(chosen.length * 90);
       setStarted(true);
+      setCalculatorOpen(false);
+      setLabsOpen(false);
       setScreen("test");
       return;
     }
@@ -367,13 +634,14 @@ export default function App() {
     const shuffled = shuffleArray(filteredQuestions);
     const examQuestions = shuffled;
     const firstBlock = getBlockQuestions(examQuestions, 0);
-    const { initialHighlights, initialCrossouts } =
+    const { initialHighlights, initialCrossouts, initialFlags } =
       buildInitialQuestionState(examQuestions);
 
     setAllExamQuestions(examQuestions);
     setSelectedQuestions(firstBlock);
     setHighlights(initialHighlights);
     setCrossedOutChoices(initialCrossouts);
+    setFlaggedQuestions(initialFlags);
     setAnswers({});
     setCurrent(0);
     setFinished(false);
@@ -384,6 +652,8 @@ export default function App() {
     setCurrentBlockIndex(0);
     setTimeLeft(firstBlock.length * 90);
     setStarted(true);
+    setCalculatorOpen(false);
+    setLabsOpen(false);
     setScreen("test");
   };
 
@@ -396,12 +666,15 @@ export default function App() {
     setAllExamQuestions([]);
     setHighlights({});
     setCrossedOutChoices({});
+    setFlaggedQuestions({});
     setAnswers({});
     setCurrent(0);
     setTimeLeft(0);
     setWasCancelled(false);
     setCurrentBlockIndex(0);
     setBlockTransition(false);
+    setCalculatorOpen(false);
+    setLabsOpen(false);
     setScreen("home");
   };
 
@@ -410,10 +683,11 @@ export default function App() {
       "End the test now? Any unanswered questions will be counted as incorrect."
     );
     if (!confirmed) return;
-
     setWasCancelled(true);
     setFinished(true);
     setShowReview(false);
+    setCalculatorOpen(false);
+    setLabsOpen(false);
   };
 
   useEffect(() => {
@@ -429,27 +703,32 @@ export default function App() {
     }));
   };
 
-  const goToNextQuestionOrFinishBlock = () => {
+  const toggleFlag = () => {
+    setFlaggedQuestions((prev) => ({
+      ...prev,
+      [currentQuestion.id]: !prev[currentQuestion.id],
+    }));
+  };
+
+  const goToNextQuestion = () => {
     if (current < selectedQuestions.length - 1) {
       setCurrent((c) => c + 1);
     } else {
-      finishCurrentBlock(false);
+      setScreen("summary");
+      setCalculatorOpen(false);
+      setLabsOpen(false);
     }
   };
 
   const prevQuestion = () => {
-    if (current > 0) {
-      setCurrent((c) => c - 1);
-    }
+    if (current > 0) setCurrent((c) => c - 1);
   };
 
   const finishCurrentBlock = (forceCancelled) => {
     const cancelled = forceCancelled || false;
 
     if (mode === "custom") {
-      if (cancelled) {
-        setWasCancelled(true);
-      }
+      if (cancelled) setWasCancelled(true);
       setFinished(true);
       setShowReview(false);
       return;
@@ -482,6 +761,8 @@ export default function App() {
     setCurrent(0);
     setTimeLeft(nextBlockQuestions.length * 90);
     setBlockTransition(false);
+    setCalculatorOpen(false);
+    setLabsOpen(false);
     setScreen("test");
   };
 
@@ -540,7 +821,6 @@ export default function App() {
 
   const clearHighlights = () => {
     if (!currentQuestion) return;
-
     setHighlights((prev) => ({
       ...prev,
       [currentQuestion.id]: [],
@@ -559,7 +839,6 @@ export default function App() {
 
   const clearCrossouts = () => {
     if (!currentQuestion) return;
-
     setCrossedOutChoices((prev) => ({
       ...prev,
       [currentQuestion.id]: {},
@@ -570,7 +849,7 @@ export default function App() {
     return (
       <div style={styles.page}>
         <div style={styles.heroCard}>
-          <h1 style={styles.heroTitle}>2021 USMLE Free 120</h1>
+          <h1 style={styles.heroTitle}>ChatGPT USMLE</h1>
           <p style={styles.heroSubtitle}>
             Build Free 120-style timed blocks, full-length exams, review misses,
             and track recent performance.
@@ -684,6 +963,7 @@ export default function App() {
                     <span>Block: {attempt.blockSize}</span>
                     <span>Status: {attempt.cancelled ? "Cancelled early" : "Completed"}</span>
                     <span>Unanswered: {attempt.unanswered}</span>
+                    <span>Flagged: {attempt.flagged}</span>
                   </div>
                 </div>
               ))}
@@ -691,6 +971,24 @@ export default function App() {
           )}
         </div>
       </div>
+    );
+  }
+
+  if (screen === "summary") {
+    return (
+      <BlockSummaryPage
+        selectedQuestions={selectedQuestions}
+        answers={answers}
+        flaggedQuestions={flaggedQuestions}
+        currentQuestionId={selectedQuestions[current]?.id}
+        onGoToQuestion={(index) => {
+          setCurrent(index);
+          setScreen("test");
+        }}
+        onBack={() => setScreen("test")}
+        onSubmit={() => finishCurrentBlock(false)}
+        mode={mode}
+      />
     );
   }
 
@@ -706,6 +1004,12 @@ export default function App() {
           <p style={styles.info}>
             No score is shown until the end of the full exam.
           </p>
+
+          <div style={styles.countersRow}>
+            <div style={styles.counterBadge}>Answered: {answeredCountCurrentBlock}</div>
+            <div style={styles.counterBadge}>Unanswered: {unansweredCountCurrentBlock}</div>
+            <div style={styles.counterBadge}>Flagged: {flaggedCountCurrentBlock}</div>
+          </div>
 
           <div style={styles.buttonRow}>
             <button onClick={startNextBlock} style={styles.primaryButton}>
@@ -744,6 +1048,10 @@ export default function App() {
 
           <p style={styles.info}>
             Missed: {missedQuestions.length} / {allExamQuestions.length}
+          </p>
+
+          <p style={styles.info}>
+            Total flagged: {allExamQuestions.filter((q) => flaggedQuestions[q.id]).length} / {allExamQuestions.length}
           </p>
 
           {mode === "full" && (
@@ -802,9 +1110,14 @@ export default function App() {
                 const imageSrc = getQuestionImageSrc(q);
                 return (
                   <div key={q.id} style={styles.reviewCard}>
-                    <h2 style={styles.reviewTitle}>
-                      Question {idx + 1} • {q.subject}
-                    </h2>
+                    <div style={styles.reviewHeaderRow}>
+                      <h2 style={styles.reviewTitle}>
+                        Question {idx + 1} • {q.subject}
+                      </h2>
+                      {flaggedQuestions[q.id] && (
+                        <span style={styles.flagPill}>Flagged</span>
+                      )}
+                    </div>
 
                     <InlineStemWithImage
                       stem={q.stem}
@@ -852,7 +1165,7 @@ export default function App() {
   }
 
   const currentImageSrc = getQuestionImageSrc(currentQuestion);
-  const currentDisplayStem = getDisplayStem(currentQuestion.stem);
+  const currentIsFlagged = flaggedQuestions[currentQuestion.id];
 
   return (
     <div style={styles.page}>
@@ -861,9 +1174,26 @@ export default function App() {
           <button onClick={resetToHome} style={styles.secondaryButton}>
             Home
           </button>
-          <button onClick={cancelTest} style={styles.dangerButton}>
-            {mode === "full" ? "End Full Exam" : "Cancel Test"}
-          </button>
+
+          <div style={styles.topRightActions}>
+            <button
+              onClick={() => setLabsOpen((prev) => !prev)}
+              style={labsOpen ? styles.activeUtilityButton : styles.secondaryButton}
+            >
+              {labsOpen ? "Hide Labs" : "Labs"}
+            </button>
+            <button
+              onClick={() => setCalculatorOpen((prev) => !prev)}
+              style={
+                calculatorOpen ? styles.activeUtilityButton : styles.secondaryButton
+              }
+            >
+              {calculatorOpen ? "Hide Calculator" : "Calculator"}
+            </button>
+            <button onClick={cancelTest} style={styles.dangerButton}>
+              {mode === "full" ? "End Full Exam" : "Cancel Test"}
+            </button>
+          </div>
         </div>
 
         <h2 style={styles.questionHeader}>
@@ -877,6 +1207,12 @@ export default function App() {
         )}
 
         <p style={styles.timer}>Time left: {formatTime(Math.max(timeLeft, 0))}</p>
+
+        <div style={styles.countersRow}>
+          <div style={styles.counterBadge}>Answered: {answeredCountCurrentBlock}</div>
+          <div style={styles.counterBadge}>Unanswered: {unansweredCountCurrentBlock}</div>
+          <div style={styles.counterBadge}>Flagged: {flaggedCountCurrentBlock}</div>
+        </div>
 
         <div style={styles.progressBarOuter}>
           <div
@@ -893,11 +1229,20 @@ export default function App() {
             choice to cross it out.
           </div>
           <div style={styles.buttonRowCompact}>
+            <button
+              onClick={toggleFlag}
+              style={currentIsFlagged ? styles.flaggedButton : styles.secondaryButton}
+            >
+              {currentIsFlagged ? "Unflag Question" : "Flag Question"}
+            </button>
             <button onClick={clearHighlights} style={styles.secondaryButton}>
               Clear Highlights
             </button>
             <button onClick={clearCrossouts} style={styles.secondaryButton}>
               Clear Crossouts
+            </button>
+            <button onClick={() => setScreen("summary")} style={styles.secondaryButton}>
+              Summary
             </button>
           </div>
         </div>
@@ -955,15 +1300,28 @@ export default function App() {
             Previous
           </button>
 
-          <button onClick={goToNextQuestionOrFinishBlock} style={styles.primaryButton}>
-            {current < selectedQuestions.length - 1
-              ? "Next"
-              : mode === "full"
-              ? "Finish Block"
-              : "Submit Test"}
+          <button
+            onClick={
+              current < selectedQuestions.length - 1
+                ? goToNextQuestion
+                : () => setScreen("summary")
+            }
+            style={styles.primaryButton}
+          >
+            {current < selectedQuestions.length - 1 ? "Next" : "Review Block"}
           </button>
         </div>
       </div>
+
+      {screen === "test" && (
+        <>
+          <FloatingLabs isOpen={labsOpen} onClose={() => setLabsOpen(false)} />
+          <FloatingCalculator
+            isOpen={calculatorOpen}
+            onClose={() => setCalculatorOpen(false)}
+          />
+        </>
+      )}
     </div>
   );
 }
@@ -1008,6 +1366,13 @@ const styles = {
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: "8px",
+    gap: "12px",
+    flexWrap: "wrap",
+  },
+  topRightActions: {
+    display: "flex",
+    gap: "10px",
+    flexWrap: "wrap",
   },
   heroTitle: {
     marginTop: 0,
@@ -1115,8 +1480,24 @@ const styles = {
   timer: {
     textAlign: "center",
     color: "#555",
-    marginBottom: "16px",
+    marginBottom: "12px",
     fontSize: "1.1rem",
+  },
+  countersRow: {
+    display: "flex",
+    justifyContent: "center",
+    gap: "10px",
+    flexWrap: "wrap",
+    marginBottom: "16px",
+  },
+  counterBadge: {
+    padding: "8px 12px",
+    borderRadius: "999px",
+    backgroundColor: "#eef2ff",
+    border: "1px solid #c7d2fe",
+    fontSize: "0.95rem",
+    color: "#3730a3",
+    fontWeight: "bold",
   },
   progressBarOuter: {
     width: "100%",
@@ -1212,6 +1593,26 @@ const styles = {
     fontSize: "1rem",
     cursor: "pointer",
   },
+  activeUtilityButton: {
+    padding: "12px 20px",
+    borderRadius: "10px",
+    border: "1px solid #1d4ed8",
+    backgroundColor: "#dbeafe",
+    color: "#1d4ed8",
+    fontSize: "1rem",
+    cursor: "pointer",
+    fontWeight: "bold",
+  },
+  flaggedButton: {
+    padding: "12px 20px",
+    borderRadius: "10px",
+    border: "1px solid #f59e0b",
+    backgroundColor: "#fef3c7",
+    color: "#92400e",
+    fontSize: "1rem",
+    cursor: "pointer",
+    fontWeight: "bold",
+  },
   dangerButton: {
     padding: "10px 16px",
     borderRadius: "10px",
@@ -1234,8 +1635,25 @@ const styles = {
     boxShadow: "0 8px 30px rgba(0,0,0,0.08)",
     marginTop: "20px",
   },
+  reviewHeaderRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: "12px",
+    flexWrap: "wrap",
+  },
   reviewTitle: {
     marginTop: 0,
+    marginBottom: "8px",
+  },
+  flagPill: {
+    backgroundColor: "#fef3c7",
+    color: "#92400e",
+    border: "1px solid #f59e0b",
+    borderRadius: "999px",
+    padding: "6px 12px",
+    fontWeight: "bold",
+    fontSize: "0.9rem",
   },
   reviewOption: {
     padding: "12px 14px",
@@ -1259,5 +1677,163 @@ const styles = {
     marginTop: "18px",
     fontSize: "1rem",
     lineHeight: 1.6,
+  },
+  floatingLabs: {
+    position: "fixed",
+    top: "88px",
+    right: "20px",
+    width: "420px",
+    maxHeight: "72vh",
+    overflowY: "auto",
+    backgroundColor: "white",
+    border: "1px solid #d1d5db",
+    borderRadius: "16px",
+    padding: "14px",
+    boxShadow: "0 12px 30px rgba(0,0,0,0.18)",
+    zIndex: 900,
+  },
+  floatingCalculator: {
+    position: "fixed",
+    top: "88px",
+    right: "460px",
+    width: "320px",
+    backgroundColor: "white",
+    border: "1px solid #d1d5db",
+    borderRadius: "16px",
+    padding: "14px",
+    boxShadow: "0 12px 30px rgba(0,0,0,0.18)",
+    zIndex: 901,
+  },
+  panelHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: "12px",
+  },
+  panelCloseButton: {
+    border: "1px solid #d1d5db",
+    backgroundColor: "white",
+    borderRadius: "8px",
+    width: "32px",
+    height: "32px",
+    cursor: "pointer",
+    fontSize: "1.1rem",
+  },
+  labsAccordion: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "10px",
+  },
+  labsSectionHeader: {
+    width: "100%",
+    padding: "10px 12px",
+    border: "1px solid #ddd",
+    borderRadius: "10px",
+    backgroundColor: "#f3f4f6",
+    textAlign: "left",
+    fontWeight: "bold",
+    cursor: "pointer",
+  },
+  labsSectionContent: {
+    padding: "10px 6px 4px 6px",
+  },
+  labRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "12px",
+    padding: "6px 0",
+    borderBottom: "1px solid #f1f5f9",
+    fontSize: "0.95rem",
+  },
+  calculatorDisplay: {
+    minHeight: "56px",
+    border: "1px solid #ddd",
+    borderRadius: "12px",
+    padding: "12px",
+    fontSize: "1.3rem",
+    marginBottom: "16px",
+    backgroundColor: "#f9fafb",
+    wordBreak: "break-all",
+  },
+  calculatorGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(4, 1fr)",
+    gap: "10px",
+  },
+  calcButton: {
+    padding: "14px",
+    borderRadius: "10px",
+    border: "1px solid #d1d5db",
+    backgroundColor: "white",
+    fontSize: "1rem",
+    cursor: "pointer",
+  },
+  calcEqualsButton: {
+    padding: "14px",
+    borderRadius: "10px",
+    border: "none",
+    backgroundColor: "#111827",
+    color: "white",
+    fontSize: "1rem",
+    cursor: "pointer",
+  },
+  summaryLegend: {
+    display: "flex",
+    justifyContent: "center",
+    gap: "14px",
+    flexWrap: "wrap",
+    marginBottom: "20px",
+  },
+  legendItem: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    color: "#555",
+  },
+  summaryChip: {
+    width: "16px",
+    height: "16px",
+    borderRadius: "999px",
+    display: "inline-block",
+  },
+  summaryAnswered: {
+    backgroundColor: "#dcfce7",
+  },
+  summaryUnanswered: {
+    backgroundColor: "#fee2e2",
+  },
+  summaryFlagged: {
+    backgroundColor: "#fef3c7",
+  },
+  summaryCurrent: {
+    backgroundColor: "#dbeafe",
+  },
+  summaryGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+    gap: "12px",
+  },
+  summaryQuestionButton: {
+    borderRadius: "12px",
+    padding: "14px",
+    border: "1px solid #ddd",
+    cursor: "pointer",
+    textAlign: "left",
+    backgroundColor: "white",
+  },
+  summaryQuestionNumber: {
+    fontWeight: "bold",
+    marginBottom: "6px",
+  },
+  summaryQuestionStatus: {
+    fontSize: "0.9rem",
+    color: "#555",
+  },
+  summaryFlaggedBorder: {
+    border: "2px solid #f59e0b",
+  },
+  summaryCurrentOutline: {
+    outline: "2px solid #2563eb",
+    outlineOffset: "2px",
   },
 };
