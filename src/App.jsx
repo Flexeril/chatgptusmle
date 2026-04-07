@@ -1,63 +1,5 @@
-import React, { useMemo, useState, useEffect } from "react";
-
-const questions = [
-  {
-    id: 1,
-    stem: `A 68-year-old man is brought to the emergency department by his wife because of worsening fatigue, decreased appetite, and swelling of his legs over the past 2 weeks. She says that over the last 2 days he has also seemed more confused and has had trouble following conversations. He has a history of hypertension, type 2 diabetes mellitus, and osteoarthritis of both knees. Three weeks ago, he developed worsening knee pain after helping his son move into a new apartment, and he has been taking an over-the-counter medication several times daily since then. His regular medications include lisinopril, hydrochlorothiazide, and metformin. He has no history of kidney disease.
-
-On examination, temperature is 37.0°C, pulse is 96/min, respirations are 18/min, and blood pressure is 154/92 mm Hg. Bibasilar crackles are present. There is 2+ pitting edema of both lower extremities.
-
-Laboratory studies show:
-Sodium 138 mEq/L
-Potassium 5.8 mEq/L
-Bicarbonate 18 mEq/L
-BUN 46 mg/dL
-Creatinine 3.1 mg/dL
-
-Two months ago, his creatinine was 1.0 mg/dL.
-
-Urinalysis shows muddy brown granular casts.
-
-Which of the following is the most likely underlying mechanism of this patient’s acute condition?`,
-    options: {
-      A: "Acute immune-mediated destruction of glomerular basement membrane",
-      B: "Afferent arteriolar vasoconstriction causing decreased glomerular perfusion",
-      C: "Eosinophilic infiltration of the renal interstitium due to drug hypersensitivity",
-      D: "Deposition of antigen-antibody complexes in the mesangium and capillary loops",
-      E: "Osmotic injury to the proximal tubular epithelium from filtered glucose",
-      F: "Direct ischemic and toxic injury to renal tubular epithelial cells",
-    },
-    answer: "F",
-    explanation:
-      "Muddy brown granular casts point to acute tubular necrosis, caused by ischemic or toxic injury to tubular epithelial cells.",
-  },
-  {
-    id: 2,
-    stem: `A 24-year-old woman comes to the physician because of fatigue, shortness of breath with exertion, and several episodes of dark urine in the morning over the past 4 months. She also reports intermittent abdominal pain. Examination shows mild conjunctival pallor.
-
-Laboratory studies show:
-Hemoglobin 8.9 g/dL
-Leukocyte count 3,200/mm3
-Platelet count 110,000/mm3
-Reticulocyte count elevated
-LDH elevated
-Haptoglobin decreased
-Direct antiglobulin test negative
-
-A defect in which of the following processes is most likely responsible for this patient’s condition?`,
-    options: {
-      A: "Assembly of beta-globin chains",
-      B: "Anchoring of complement-regulatory proteins to the cell membrane",
-      C: "Synthesis of spectrin in the erythrocyte cytoskeleton",
-      D: "Reduction of glutathione within erythrocytes",
-      E: "Insertion of iron into protoporphyrin",
-      F: "Class switching of immunoglobulin heavy chains",
-    },
-    answer: "B",
-    explanation:
-      "This is paroxysmal nocturnal hemoglobinuria due to defective anchoring of complement-regulatory proteins such as CD55 and CD59.",
-  },
-];
+import React, { useEffect, useMemo, useState } from "react";
+import { questions as allQuestions } from "./questions";
 
 function formatTime(totalSeconds) {
   const m = Math.floor(totalSeconds / 60);
@@ -65,20 +7,26 @@ function formatTime(totalSeconds) {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
+function shuffleArray(array) {
+  const copy = [...array];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
 export default function App() {
-  const totalSeconds = 5 * 60;
+  const [blockSize, setBlockSize] = useState(5);
   const [started, setStarted] = useState(false);
   const [finished, setFinished] = useState(false);
-  const [timeLeft, setTimeLeft] = useState(totalSeconds);
+  const [showReview, setShowReview] = useState(false);
+  const [selectedQuestions, setSelectedQuestions] = useState([]);
+  const [timeLeft, setTimeLeft] = useState(0);
   const [current, setCurrent] = useState(0);
   const [answers, setAnswers] = useState({});
-  const [showReview, setShowReview] = useState(false);
 
-  const question = questions[current];
-  const progress = useMemo(
-    () => ((current + 1) / questions.length) * 100,
-    [current]
-  );
+  const totalSeconds = blockSize * 90;
 
   useEffect(() => {
     if (!started || finished) return;
@@ -86,114 +34,383 @@ export default function App() {
       setFinished(true);
       return;
     }
+
     const timer = setInterval(() => {
       setTimeLeft((t) => t - 1);
     }, 1000);
+
     return () => clearInterval(timer);
   }, [started, finished, timeLeft]);
 
-  const chooseAnswer = (letter) => {
-    setAnswers((prev) => ({ ...prev, [question.id]: letter }));
-  };
+  const currentQuestion = selectedQuestions[current];
 
-  const nextQuestion = () => {
-    if (current < questions.length - 1) setCurrent((c) => c + 1);
-    else setFinished(true);
-  };
+  const progress = useMemo(() => {
+    if (!selectedQuestions.length) return 0;
+    return ((current + 1) / selectedQuestions.length) * 100;
+  }, [current, selectedQuestions]);
 
-  const prevQuestion = () => {
-    if (current > 0) setCurrent((c) => c - 1);
+  const score = selectedQuestions.reduce((acc, q) => {
+    return acc + (answers[q.id] === q.answer ? 1 : 0);
+  }, 0);
+
+  const startTest = () => {
+    const shuffled = shuffleArray(allQuestions);
+    const chosen = shuffled.slice(0, Math.min(blockSize, allQuestions.length));
+    setSelectedQuestions(chosen);
+    setAnswers({});
+    setCurrent(0);
+    setFinished(false);
+    setShowReview(false);
+    setTimeLeft(chosen.length * 90);
+    setStarted(true);
   };
 
   const resetTest = () => {
     setStarted(false);
     setFinished(false);
-    setTimeLeft(totalSeconds);
-    setCurrent(0);
-    setAnswers({});
     setShowReview(false);
+    setSelectedQuestions([]);
+    setAnswers({});
+    setCurrent(0);
+    setTimeLeft(0);
   };
 
-  const score = questions.reduce(
-    (acc, q) => acc + (answers[q.id] === q.answer ? 1 : 0),
-    0
-  );
+  const chooseAnswer = (letter) => {
+    setAnswers((prev) => ({
+      ...prev,
+      [currentQuestion.id]: letter,
+    }));
+  };
+
+  const nextQuestion = () => {
+    if (current < selectedQuestions.length - 1) {
+      setCurrent((c) => c + 1);
+    } else {
+      setFinished(true);
+    }
+  };
+
+  const prevQuestion = () => {
+    if (current > 0) {
+      setCurrent((c) => c - 1);
+    }
+  };
 
   if (!started) {
     return (
-      <div style={{ maxWidth: 900, margin: "40px auto", fontFamily: "Arial, sans-serif" }}>
-        <h1>Free 120 Style Mini Test</h1>
-        <p>{questions.length} questions • {formatTime(totalSeconds)} • answers hidden until end</p>
-        <button onClick={() => setStarted(true)}>Start Test</button>
+      <div style={styles.page}>
+        <div style={styles.card}>
+          <h1 style={styles.title}>Free 120 Style Mini Test</h1>
+          <p style={styles.subtitle}>
+            Randomized questions • answers hidden until end
+          </p>
+
+          <div style={styles.section}>
+            <label style={styles.label}>Choose block size:</label>
+            <select
+              value={blockSize}
+              onChange={(e) => setBlockSize(Number(e.target.value))}
+              style={styles.select}
+            >
+              <option value={3}>3 questions</option>
+              <option value={5}>5 questions</option>
+              <option value={10}>10 questions</option>
+            </select>
+          </div>
+
+          <p style={styles.info}>
+            Timer: about 90 seconds per question ({formatTime(totalSeconds)})
+          </p>
+
+          <button onClick={startTest} style={styles.primaryButton}>
+            Start Test
+          </button>
+        </div>
       </div>
     );
   }
 
   if (finished) {
     return (
-      <div style={{ maxWidth: 900, margin: "40px auto", fontFamily: "Arial, sans-serif" }}>
-        <h1>Test Complete</h1>
-        <p>Score: {score} / {questions.length}</p>
-        <p>Time remaining: {formatTime(Math.max(timeLeft, 0))}</p>
-        <button onClick={() => setShowReview((v) => !v)}>
-          {showReview ? "Hide Review" : "Show Review"}
-        </button>
-        <button onClick={resetTest} style={{ marginLeft: 12 }}>
-          Reset
-        </button>
+      <div style={styles.page}>
+        <div style={styles.card}>
+          <h1 style={styles.title}>Test Complete</h1>
+          <p style={styles.result}>
+            Score: {score} / {selectedQuestions.length}
+          </p>
+          <p style={styles.info}>
+            Time remaining: {formatTime(Math.max(timeLeft, 0))}
+          </p>
 
-        {showReview && questions.map((q, idx) => (
-          <div key={q.id} style={{ border: "1px solid #ccc", padding: 16, marginTop: 20 }}>
-            <h3>Question {idx + 1}</h3>
-            <pre style={{ whiteSpace: "pre-wrap", fontFamily: "inherit" }}>{q.stem}</pre>
-            {Object.entries(q.options).map(([letter, text]) => (
-              <div key={letter} style={{ marginTop: 8 }}>
-                <strong>{letter}.</strong> {text}
-                {q.answer === letter ? " ✅" : ""}
-                {answers[q.id] === letter && q.answer !== letter ? " ❌" : ""}
+          <div style={styles.buttonRow}>
+            <button
+              onClick={() => setShowReview((v) => !v)}
+              style={styles.primaryButton}
+            >
+              {showReview ? "Hide Review" : "Show Review"}
+            </button>
+
+            <button onClick={resetTest} style={styles.secondaryButton}>
+              New Block
+            </button>
+          </div>
+        </div>
+
+        {showReview && (
+          <div style={{ maxWidth: 950, width: "100%" }}>
+            {selectedQuestions.map((q, idx) => (
+              <div key={q.id} style={styles.reviewCard}>
+                <h2 style={styles.reviewTitle}>
+                  Question {idx + 1} • {q.subject}
+                </h2>
+
+                <pre style={styles.stem}>{q.stem}</pre>
+
+                <div style={styles.optionsWrap}>
+                  {Object.entries(q.options).map(([letter, text]) => {
+                    const isCorrect = q.answer === letter;
+                    const isChosen = answers[q.id] === letter;
+
+                    return (
+                      <div
+                        key={letter}
+                        style={{
+                          ...styles.reviewOption,
+                          ...(isCorrect
+                            ? styles.correctOption
+                            : isChosen
+                            ? styles.wrongOption
+                            : {}),
+                        }}
+                      >
+                        <strong>{letter}.</strong> {text}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <p style={styles.explanation}>
+                  <strong>Explanation:</strong> {q.explanation}
+                </p>
               </div>
             ))}
-            <p><strong>Explanation:</strong> {q.explanation}</p>
           </div>
-        ))}
+        )}
       </div>
     );
   }
 
   return (
-    <div style={{ maxWidth: 900, margin: "40px auto", fontFamily: "Arial, sans-serif" }}>
-      <h2>Question {current + 1} of {questions.length}</h2>
-      <p>Time left: {formatTime(Math.max(timeLeft, 0))}</p>
-      <div style={{ height: 10, background: "#eee", marginBottom: 20 }}>
-        <div style={{ width: `${progress}%`, height: "100%", background: "#444" }} />
-      </div>
+    <div style={styles.page}>
+      <div style={styles.card}>
+        <h2 style={styles.questionHeader}>
+          Question {current + 1} of {selectedQuestions.length}
+        </h2>
 
-      <pre style={{ whiteSpace: "pre-wrap", fontFamily: "inherit" }}>{question.stem}</pre>
+        <p style={styles.timer}>Time left: {formatTime(Math.max(timeLeft, 0))}</p>
 
-      <div>
-        {Object.entries(question.options).map(([letter, text]) => (
-          <div key={letter} style={{ marginTop: 12 }}>
-            <label>
+        <div style={styles.progressBarOuter}>
+          <div
+            style={{
+              ...styles.progressBarInner,
+              width: `${progress}%`,
+            }}
+          />
+        </div>
+
+        <pre style={styles.stem}>{currentQuestion.stem}</pre>
+
+        <div style={styles.optionsWrap}>
+          {Object.entries(currentQuestion.options).map(([letter, text]) => (
+            <label key={letter} style={styles.optionLabel}>
               <input
                 type="radio"
-                name={`question-${question.id}`}
-                checked={answers[question.id] === letter}
+                name={`question-${currentQuestion.id}`}
+                checked={answers[currentQuestion.id] === letter}
                 onChange={() => chooseAnswer(letter)}
-              />{" "}
-              <strong>{letter}.</strong> {text}
+              />
+              <span>
+                <strong>{letter}.</strong> {text}
+              </span>
             </label>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
 
-      <div style={{ marginTop: 24 }}>
-        <button onClick={prevQuestion} disabled={current === 0}>
-          Previous
-        </button>
-        <button onClick={nextQuestion} style={{ marginLeft: 12 }}>
-          {current < questions.length - 1 ? "Next" : "Submit Test"}
-        </button>
+        <div style={styles.buttonRow}>
+          <button
+            onClick={prevQuestion}
+            disabled={current === 0}
+            style={{
+              ...styles.secondaryButton,
+              opacity: current === 0 ? 0.5 : 1,
+              cursor: current === 0 ? "not-allowed" : "pointer",
+            }}
+          >
+            Previous
+          </button>
+
+          <button onClick={nextQuestion} style={styles.primaryButton}>
+            {current < selectedQuestions.length - 1 ? "Next" : "Submit Test"}
+          </button>
+        </div>
       </div>
     </div>
   );
 }
+
+const styles = {
+  page: {
+    minHeight: "100vh",
+    backgroundColor: "#f5f7fb",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    padding: "32px 16px",
+    fontFamily: "Arial, sans-serif",
+  },
+  card: {
+    width: "100%",
+    maxWidth: "950px",
+    backgroundColor: "white",
+    borderRadius: "16px",
+    padding: "32px",
+    boxShadow: "0 8px 30px rgba(0,0,0,0.08)",
+  },
+  title: {
+    marginTop: 0,
+    marginBottom: "8px",
+    fontSize: "2.5rem",
+    textAlign: "center",
+  },
+  subtitle: {
+    textAlign: "center",
+    color: "#666",
+    marginBottom: "24px",
+  },
+  section: {
+    marginBottom: "16px",
+    display: "flex",
+    flexDirection: "column",
+    gap: "8px",
+    alignItems: "center",
+  },
+  label: {
+    fontWeight: "bold",
+  },
+  select: {
+    padding: "10px 14px",
+    fontSize: "1rem",
+    borderRadius: "8px",
+  },
+  info: {
+    textAlign: "center",
+    color: "#555",
+  },
+  result: {
+    fontSize: "1.3rem",
+    textAlign: "center",
+    fontWeight: "bold",
+  },
+  questionHeader: {
+    textAlign: "center",
+    marginBottom: "8px",
+  },
+  timer: {
+    textAlign: "center",
+    color: "#555",
+    marginBottom: "16px",
+    fontSize: "1.1rem",
+  },
+  progressBarOuter: {
+    width: "100%",
+    height: "12px",
+    backgroundColor: "#e5e7eb",
+    borderRadius: "999px",
+    overflow: "hidden",
+    marginBottom: "24px",
+  },
+  progressBarInner: {
+    height: "100%",
+    backgroundColor: "#111827",
+  },
+  stem: {
+    whiteSpace: "pre-wrap",
+    fontFamily: "Arial, sans-serif",
+    fontSize: "1.15rem",
+    lineHeight: 1.7,
+    color: "#222",
+    marginBottom: "28px",
+  },
+  optionsWrap: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "14px",
+  },
+  optionLabel: {
+    display: "flex",
+    gap: "12px",
+    alignItems: "flex-start",
+    padding: "14px 16px",
+    border: "1px solid #ddd",
+    borderRadius: "12px",
+    cursor: "pointer",
+    fontSize: "1.05rem",
+    lineHeight: 1.5,
+    backgroundColor: "#fafafa",
+  },
+  buttonRow: {
+    display: "flex",
+    gap: "12px",
+    justifyContent: "center",
+    marginTop: "28px",
+    flexWrap: "wrap",
+  },
+  primaryButton: {
+    padding: "12px 20px",
+    borderRadius: "10px",
+    border: "none",
+    backgroundColor: "#111827",
+    color: "white",
+    fontSize: "1rem",
+    cursor: "pointer",
+  },
+  secondaryButton: {
+    padding: "12px 20px",
+    borderRadius: "10px",
+    border: "1px solid #ccc",
+    backgroundColor: "white",
+    fontSize: "1rem",
+    cursor: "pointer",
+  },
+  reviewCard: {
+    width: "100%",
+    maxWidth: "950px",
+    backgroundColor: "white",
+    borderRadius: "16px",
+    padding: "28px",
+    boxShadow: "0 8px 30px rgba(0,0,0,0.08)",
+    marginTop: "20px",
+  },
+  reviewTitle: {
+    marginTop: 0,
+  },
+  reviewOption: {
+    padding: "12px 14px",
+    borderRadius: "10px",
+    border: "1px solid #ddd",
+    backgroundColor: "#fafafa",
+  },
+  correctOption: {
+    backgroundColor: "#dcfce7",
+    border: "1px solid #22c55e",
+  },
+  wrongOption: {
+    backgroundColor: "#fee2e2",
+    border: "1px solid #ef4444",
+  },
+  explanation: {
+    marginTop: "18px",
+    fontSize: "1rem",
+    lineHeight: 1.6,
+  },
+};
