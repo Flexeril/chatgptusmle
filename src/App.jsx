@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { questions as allQuestions } from "./questions";
 
 const SCORE_STORAGE_KEY = "chatgptusmle_attempt_history";
+const FULL_EXAM_BLOCK_SIZE = 40;
 
 function formatTime(totalSeconds) {
   const m = Math.floor(totalSeconds / 60);
@@ -28,7 +29,7 @@ function mergeHighlightRanges(ranges) {
     .filter((r) => r.start < r.end)
     .sort((a, b) => a.start - b.start);
 
-  const merged = [sorted[0]];
+  const merged = [{ ...sorted[0] }];
 
   for (let i = 1; i < sorted.length; i++) {
     const current = sorted[i];
@@ -70,18 +71,28 @@ function getAbsoluteOffset(root, targetNode, targetOffset) {
   return total;
 }
 
-function HighlightedStem({ stem, highlights, stemRef, onMouseUp, style }) {
-  const merged = mergeHighlightRanges(highlights || []);
-  const lines = stem.split("\n");
+function getDisplayStem(stem) {
+  return stem.replace(/\[IMAGE\]/g, "");
+}
 
-  let globalIndex = 0;
+function getQuestionImageSrc(question) {
+  if (question.image) return question.image;
+  if (question.hasImage) return `/images/question${question.id}.png`;
+  return null;
+}
+
+function StemTextSegment({ text, highlights, baseOffset }) {
+  const merged = mergeHighlightRanges(highlights || []);
+  const lines = text.split("\n");
+
+  let localGlobalIndex = 0;
 
   return (
-    <div ref={stemRef} style={style} onMouseUp={onMouseUp}>
+    <>
       {lines.map((line, lineIndex) => {
-        const lineStart = globalIndex;
+        const lineStart = baseOffset + localGlobalIndex;
         const lineEnd = lineStart + line.length;
-        globalIndex = lineEnd + 1;
+        localGlobalIndex += line.length + 1;
 
         const pieces = [];
         let cursor = lineStart;
@@ -97,13 +108,19 @@ function HighlightedStem({ stem, highlights, stemRef, onMouseUp, style }) {
           if (start > cursor) {
             pieces.push({
               type: "plain",
-              text: stem.slice(cursor, start),
+              text: text.slice(
+                startIndexWithinSegment(cursor, baseOffset),
+                startIndexWithinSegment(start, baseOffset)
+              ),
             });
           }
 
           pieces.push({
             type: "highlight",
-            text: stem.slice(start, end),
+            text: text.slice(
+              startIndexWithinSegment(start, baseOffset),
+              startIndexWithinSegment(end, baseOffset)
+            ),
           });
 
           cursor = end;
@@ -112,7 +129,10 @@ function HighlightedStem({ stem, highlights, stemRef, onMouseUp, style }) {
         if (cursor < lineEnd) {
           pieces.push({
             type: "plain",
-            text: stem.slice(cursor, lineEnd),
+            text: text.slice(
+              startIndexWithinSegment(cursor, baseOffset),
+              startIndexWithinSegment(lineEnd, baseOffset)
+            ),
           });
         }
 
@@ -134,36 +154,78 @@ function HighlightedStem({ stem, highlights, stemRef, onMouseUp, style }) {
           </div>
         );
       })}
-    </div>
+    </>
   );
 }
 
-function QuestionImage({ image, alt }) {
-  if (!image) return null;
+function startIndexWithinSegment(absoluteIndex, baseOffset) {
+  return absoluteIndex - baseOffset;
+}
+
+function InlineStemWithImage({
+  stem,
+  image,
+  highlights,
+  stemRef,
+  onMouseUp,
+  style,
+}) {
+  const parts = stem.split("[IMAGE]");
+  let baseOffset = 0;
 
   return (
-    <div style={styles.imageWrap}>
-      <img src={image} alt={alt || "Question figure"} style={styles.questionImage} />
+    <div ref={stemRef} style={style} onMouseUp={onMouseUp}>
+      {parts.map((part, index) => {
+        const currentBase = baseOffset;
+        baseOffset += part.length;
+
+        return (
+          <React.Fragment key={index}>
+            <StemTextSegment
+              text={part}
+              highlights={highlights}
+              baseOffset={currentBase}
+            />
+            {index < parts.length - 1 && image && (
+              <div style={styles.imageWrap}>
+                <img
+                  src={image}
+                  alt="Question figure"
+                  style={styles.questionImage}
+                />
+              </div>
+            )}
+          </React.Fragment>
+        );
+      })}
     </div>
   );
 }
 
 export default function App() {
   const [screen, setScreen] = useState("home");
+  const [mode, setMode] = useState("custom");
   const [blockSize, setBlockSize] = useState(5);
   const [subjectFilter, setSubjectFilter] = useState("All");
+
   const [started, setStarted] = useState(false);
   const [finished, setFinished] = useState(false);
   const [showReview, setShowReview] = useState(false);
   const [reviewMode, setReviewMode] = useState("all");
+
   const [selectedQuestions, setSelectedQuestions] = useState([]);
+  const [allExamQuestions, setAllExamQuestions] = useState([]);
   const [timeLeft, setTimeLeft] = useState(0);
   const [current, setCurrent] = useState(0);
+
   const [answers, setAnswers] = useState({});
   const [highlights, setHighlights] = useState({});
   const [crossedOutChoices, setCrossedOutChoices] = useState({});
   const [wasCancelled, setWasCancelled] = useState(false);
   const [attemptHistory, setAttemptHistory] = useState([]);
+
+  const [currentBlockIndex, setCurrentBlockIndex] = useState(0);
+  const [blockTransition, setBlockTransition] = useState(false);
 
   const stemRef = useRef(null);
 
@@ -177,6 +239,11 @@ export default function App() {
     return allQuestions.filter((q) => q.subject === subjectFilter);
   }, [subjectFilter]);
 
+  const totalExamBlocks = useMemo(() => {
+    if (mode !== "full") return 1;
+    return Math.ceil(allExamQuestions.length / FULL_EXAM_BLOCK_SIZE) || 1;
+  }, [mode, allExamQuestions.length]);
+
   useEffect(() => {
     try {
       const saved = localStorage.getItem(SCORE_STORAGE_KEY);
@@ -189,9 +256,9 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!started || finished) return;
+    if (!started || finished || blockTransition) return;
     if (timeLeft <= 0) {
-      setFinished(true);
+      finishCurrentBlock(false);
       return;
     }
 
@@ -200,7 +267,7 @@ export default function App() {
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [started, finished, timeLeft]);
+  }, [started, finished, timeLeft, blockTransition]);
 
   const currentQuestion = selectedQuestions[current];
 
@@ -209,29 +276,48 @@ export default function App() {
     return ((current + 1) / selectedQuestions.length) * 100;
   }, [current, selectedQuestions]);
 
-  const score = selectedQuestions.reduce((acc, q) => {
+  const score = allExamQuestions.reduce((acc, q) => {
     return acc + (answers[q.id] === q.answer ? 1 : 0);
   }, 0);
 
-  const missedQuestions = selectedQuestions.filter(
+  const missedQuestions = allExamQuestions.filter(
     (q) => answers[q.id] !== q.answer
   );
 
   const reviewQuestions =
-    reviewMode === "missed" ? missedQuestions : selectedQuestions;
+    reviewMode === "missed" ? missedQuestions : allExamQuestions;
 
-  const actualBlockCount = Math.min(blockSize, filteredQuestions.length);
+  const actualCustomBlockCount = Math.min(blockSize, filteredQuestions.length);
+
+  function buildInitialQuestionState(questions) {
+    const initialHighlights = {};
+    const initialCrossouts = {};
+
+    questions.forEach((q) => {
+      initialHighlights[q.id] = [];
+      initialCrossouts[q.id] = {};
+    });
+
+    return { initialHighlights, initialCrossouts };
+  }
+
+  function getBlockQuestions(examQuestions, blockIndex) {
+    const start = blockIndex * FULL_EXAM_BLOCK_SIZE;
+    const end = start + FULL_EXAM_BLOCK_SIZE;
+    return examQuestions.slice(start, end);
+  }
 
   const saveAttempt = (cancelled) => {
     const entry = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       timestamp: new Date().toISOString(),
+      mode,
       score,
-      total: selectedQuestions.length,
+      total: allExamQuestions.length,
       subjectFilter,
-      blockSize: selectedQuestions.length,
+      blockSize: mode === "full" ? "Full exam" : selectedQuestions.length,
       cancelled,
-      unanswered: selectedQuestions.filter((q) => answers[q.id] == null).length,
+      unanswered: allExamQuestions.filter((q) => answers[q.id] == null).length,
       timeRemaining: timeLeft,
     };
 
@@ -254,18 +340,38 @@ export default function App() {
   };
 
   const startTest = () => {
+    if (mode === "custom") {
+      const shuffled = shuffleArray(filteredQuestions);
+      const chosen = shuffled.slice(0, actualCustomBlockCount);
+      const { initialHighlights, initialCrossouts } =
+        buildInitialQuestionState(chosen);
+
+      setAllExamQuestions(chosen);
+      setSelectedQuestions(chosen);
+      setHighlights(initialHighlights);
+      setCrossedOutChoices(initialCrossouts);
+      setAnswers({});
+      setCurrent(0);
+      setFinished(false);
+      setShowReview(false);
+      setReviewMode("all");
+      setWasCancelled(false);
+      setBlockTransition(false);
+      setCurrentBlockIndex(0);
+      setTimeLeft(chosen.length * 90);
+      setStarted(true);
+      setScreen("test");
+      return;
+    }
+
     const shuffled = shuffleArray(filteredQuestions);
-    const chosen = shuffled.slice(0, actualBlockCount);
+    const examQuestions = shuffled;
+    const firstBlock = getBlockQuestions(examQuestions, 0);
+    const { initialHighlights, initialCrossouts } =
+      buildInitialQuestionState(examQuestions);
 
-    const initialHighlights = {};
-    const initialCrossouts = {};
-
-    chosen.forEach((q) => {
-      initialHighlights[q.id] = [];
-      initialCrossouts[q.id] = {};
-    });
-
-    setSelectedQuestions(chosen);
+    setAllExamQuestions(examQuestions);
+    setSelectedQuestions(firstBlock);
     setHighlights(initialHighlights);
     setCrossedOutChoices(initialCrossouts);
     setAnswers({});
@@ -274,7 +380,9 @@ export default function App() {
     setShowReview(false);
     setReviewMode("all");
     setWasCancelled(false);
-    setTimeLeft(chosen.length * 90);
+    setBlockTransition(false);
+    setCurrentBlockIndex(0);
+    setTimeLeft(firstBlock.length * 90);
     setStarted(true);
     setScreen("test");
   };
@@ -285,12 +393,15 @@ export default function App() {
     setShowReview(false);
     setReviewMode("all");
     setSelectedQuestions([]);
+    setAllExamQuestions([]);
     setHighlights({});
     setCrossedOutChoices({});
     setAnswers({});
     setCurrent(0);
     setTimeLeft(0);
     setWasCancelled(false);
+    setCurrentBlockIndex(0);
+    setBlockTransition(false);
     setScreen("home");
   };
 
@@ -318,11 +429,11 @@ export default function App() {
     }));
   };
 
-  const nextQuestion = () => {
+  const goToNextQuestionOrFinishBlock = () => {
     if (current < selectedQuestions.length - 1) {
       setCurrent((c) => c + 1);
     } else {
-      setFinished(true);
+      finishCurrentBlock(false);
     }
   };
 
@@ -330,6 +441,48 @@ export default function App() {
     if (current > 0) {
       setCurrent((c) => c - 1);
     }
+  };
+
+  const finishCurrentBlock = (forceCancelled) => {
+    const cancelled = forceCancelled || false;
+
+    if (mode === "custom") {
+      if (cancelled) {
+        setWasCancelled(true);
+      }
+      setFinished(true);
+      setShowReview(false);
+      return;
+    }
+
+    const isLastBlock = currentBlockIndex >= totalExamBlocks - 1;
+
+    if (cancelled) {
+      setWasCancelled(true);
+      setFinished(true);
+      setShowReview(false);
+      return;
+    }
+
+    if (isLastBlock) {
+      setFinished(true);
+      setShowReview(false);
+      return;
+    }
+
+    setBlockTransition(true);
+  };
+
+  const startNextBlock = () => {
+    const nextBlockIndex = currentBlockIndex + 1;
+    const nextBlockQuestions = getBlockQuestions(allExamQuestions, nextBlockIndex);
+
+    setCurrentBlockIndex(nextBlockIndex);
+    setSelectedQuestions(nextBlockQuestions);
+    setCurrent(0);
+    setTimeLeft(nextBlockQuestions.length * 90);
+    setBlockTransition(false);
+    setScreen("test");
   };
 
   const handleStemMouseUp = () => {
@@ -419,10 +572,23 @@ export default function App() {
         <div style={styles.heroCard}>
           <h1 style={styles.heroTitle}>ChatGPT USMLE</h1>
           <p style={styles.heroSubtitle}>
-            Build Free 120-style timed blocks, review misses, and track recent performance.
+            Build Free 120-style timed blocks, full-length exams, review misses,
+            and track recent performance.
           </p>
 
           <div style={styles.controlsGrid}>
+            <div style={styles.controlBox}>
+              <label style={styles.label}>Mode</label>
+              <select
+                value={mode}
+                onChange={(e) => setMode(e.target.value)}
+                style={styles.select}
+              >
+                <option value="custom">Custom Block</option>
+                <option value="full">Full Exam</option>
+              </select>
+            </div>
+
             <div style={styles.controlBox}>
               <label style={styles.label}>Subject</label>
               <select
@@ -438,31 +604,41 @@ export default function App() {
               </select>
             </div>
 
-            <div style={styles.controlBox}>
-              <label style={styles.label}>Block size</label>
-              <select
-                value={blockSize}
-                onChange={(e) => setBlockSize(Number(e.target.value))}
-                style={styles.select}
-              >
-                <option value={3}>3 questions</option>
-                <option value={5}>5 questions</option>
-                <option value={10}>10 questions</option>
-                <option value={20}>20 questions</option>
-                <option value={40}>40 questions</option>
-              </select>
-            </div>
+            {mode === "custom" && (
+              <div style={styles.controlBox}>
+                <label style={styles.label}>Block size</label>
+                <select
+                  value={blockSize}
+                  onChange={(e) => setBlockSize(Number(e.target.value))}
+                  style={styles.select}
+                >
+                  <option value={3}>3 questions</option>
+                  <option value={5}>5 questions</option>
+                  <option value={10}>10 questions</option>
+                  <option value={20}>20 questions</option>
+                  <option value={40}>40 questions</option>
+                </select>
+              </div>
+            )}
           </div>
 
           <p style={styles.info}>
             Available after filter: <strong>{filteredQuestions.length}</strong>
           </p>
 
-          <p style={styles.info}>
-            This block will contain <strong>{actualBlockCount}</strong>{" "}
-            question{actualBlockCount === 1 ? "" : "s"} • Timer:{" "}
-            <strong>{formatTime(actualBlockCount * 90)}</strong>
-          </p>
+          {mode === "custom" ? (
+            <p style={styles.info}>
+              This block will contain <strong>{actualCustomBlockCount}</strong>{" "}
+              question{actualCustomBlockCount === 1 ? "" : "s"} • Timer:{" "}
+              <strong>{formatTime(actualCustomBlockCount * 90)}</strong>
+            </p>
+          ) : (
+            <p style={styles.info}>
+              Full Exam mode uses all filtered questions in fixed{" "}
+              <strong>40-question blocks</strong>. Final block contains the
+              remainder. Score is shown <strong>only at the end</strong>.
+            </p>
+          )}
 
           <div style={styles.buttonRow}>
             <button
@@ -473,7 +649,7 @@ export default function App() {
               }}
               disabled={filteredQuestions.length === 0}
             >
-              Start New Block
+              {mode === "custom" ? "Start New Block" : "Start Full Exam"}
             </button>
           </div>
         </div>
@@ -503,11 +679,10 @@ export default function App() {
                     </span>
                   </div>
                   <div style={styles.historyMeta}>
+                    <span>Mode: {attempt.mode === "full" ? "Full exam" : "Custom block"}</span>
                     <span>Subject: {attempt.subjectFilter}</span>
                     <span>Block: {attempt.blockSize}</span>
-                    <span>
-                      Status: {attempt.cancelled ? "Cancelled early" : "Completed"}
-                    </span>
+                    <span>Status: {attempt.cancelled ? "Cancelled early" : "Completed"}</span>
                     <span>Unanswered: {attempt.unanswered}</span>
                   </div>
                 </div>
@@ -519,22 +694,68 @@ export default function App() {
     );
   }
 
+  if (blockTransition && mode === "full") {
+    return (
+      <div style={styles.page}>
+        <div style={styles.card}>
+          <h1 style={styles.title}>Block Complete</h1>
+          <p style={styles.info}>
+            You finished block <strong>{currentBlockIndex + 1}</strong> of{" "}
+            <strong>{totalExamBlocks}</strong>.
+          </p>
+          <p style={styles.info}>
+            No score is shown until the end of the full exam.
+          </p>
+
+          <div style={styles.buttonRow}>
+            <button onClick={startNextBlock} style={styles.primaryButton}>
+              Start Next Block
+            </button>
+            <button onClick={cancelTest} style={styles.dangerButton}>
+              End Full Exam Now
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (finished) {
     return (
       <div style={styles.page}>
         <div style={styles.card}>
           <h1 style={styles.title}>
-            {wasCancelled ? "Test Ended Early" : "Test Complete"}
+            {wasCancelled
+              ? mode === "full"
+                ? "Full Exam Ended Early"
+                : "Test Ended Early"
+              : mode === "full"
+              ? "Full Exam Complete"
+              : "Test Complete"}
           </h1>
+
           <p style={styles.result}>
-            Score: {score} / {selectedQuestions.length}
+            Score: {score} / {allExamQuestions.length}
           </p>
+
           <p style={styles.info}>
-            Time remaining: {formatTime(Math.max(timeLeft, 0))}
+            Time remaining in current block: {formatTime(Math.max(timeLeft, 0))}
           </p>
+
           <p style={styles.info}>
-            Missed: {missedQuestions.length} / {selectedQuestions.length}
+            Missed: {missedQuestions.length} / {allExamQuestions.length}
           </p>
+
+          {mode === "full" && (
+            <p style={styles.info}>
+              Blocks completed:{" "}
+              <strong>
+                {wasCancelled ? currentBlockIndex + 1 : totalExamBlocks}
+              </strong>{" "}
+              / <strong>{totalExamBlocks}</strong>
+            </p>
+          )}
+
           {wasCancelled && (
             <p style={styles.warningText}>
               Unanswered questions were counted as incorrect.
@@ -577,56 +798,61 @@ export default function App() {
                 <p style={styles.info}>You got every question right.</p>
               </div>
             ) : (
-              reviewQuestions.map((q, idx) => (
-                <div key={q.id} style={styles.reviewCard}>
-                  <h2 style={styles.reviewTitle}>
-                    Question {idx + 1} • {q.subject}
-                  </h2>
+              reviewQuestions.map((q, idx) => {
+                const imageSrc = getQuestionImageSrc(q);
+                return (
+                  <div key={q.id} style={styles.reviewCard}>
+                    <h2 style={styles.reviewTitle}>
+                      Question {idx + 1} • {q.subject}
+                    </h2>
 
-                  <QuestionImage image={q.image} alt={`Question ${idx + 1} figure`} />
+                    <InlineStemWithImage
+                      stem={q.stem}
+                      image={imageSrc}
+                      highlights={highlights[q.id] || []}
+                      style={styles.stem}
+                    />
 
-                  <HighlightedStem
-                    stem={q.stem}
-                    highlights={highlights[q.id] || []}
-                    style={styles.stem}
-                  />
+                    <div style={styles.optionsWrap}>
+                      {Object.entries(q.options).map(([letter, text]) => {
+                        const isCorrect = q.answer === letter;
+                        const isChosen = answers[q.id] === letter;
+                        const isCrossed = (crossedOutChoices[q.id] || {})[letter];
 
-                  <div style={styles.optionsWrap}>
-                    {Object.entries(q.options).map(([letter, text]) => {
-                      const isCorrect = q.answer === letter;
-                      const isChosen = answers[q.id] === letter;
-                      const isCrossed = (crossedOutChoices[q.id] || {})[letter];
+                        return (
+                          <div
+                            key={letter}
+                            style={{
+                              ...styles.reviewOption,
+                              ...(isCorrect
+                                ? styles.correctOption
+                                : isChosen
+                                ? styles.wrongOption
+                                : {}),
+                              ...(isCrossed ? styles.crossedOutOption : {}),
+                            }}
+                          >
+                            <strong>{letter}.</strong> {text}
+                          </div>
+                        );
+                      })}
+                    </div>
 
-                      return (
-                        <div
-                          key={letter}
-                          style={{
-                            ...styles.reviewOption,
-                            ...(isCorrect
-                              ? styles.correctOption
-                              : isChosen
-                              ? styles.wrongOption
-                              : {}),
-                            ...(isCrossed ? styles.crossedOutOption : {}),
-                          }}
-                        >
-                          <strong>{letter}.</strong> {text}
-                        </div>
-                      );
-                    })}
+                    <p style={styles.explanation}>
+                      <strong>Explanation:</strong> {q.explanation}
+                    </p>
                   </div>
-
-                  <p style={styles.explanation}>
-                    <strong>Explanation:</strong> {q.explanation}
-                  </p>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         )}
       </div>
     );
   }
+
+  const currentImageSrc = getQuestionImageSrc(currentQuestion);
+  const currentDisplayStem = getDisplayStem(currentQuestion.stem);
 
   return (
     <div style={styles.page}>
@@ -636,13 +862,19 @@ export default function App() {
             Home
           </button>
           <button onClick={cancelTest} style={styles.dangerButton}>
-            Cancel Test
+            {mode === "full" ? "End Full Exam" : "Cancel Test"}
           </button>
         </div>
 
         <h2 style={styles.questionHeader}>
           Question {current + 1} of {selectedQuestions.length}
         </h2>
+
+        {mode === "full" && (
+          <p style={styles.info}>
+            Block {currentBlockIndex + 1} of {totalExamBlocks}
+          </p>
+        )}
 
         <p style={styles.timer}>Time left: {formatTime(Math.max(timeLeft, 0))}</p>
 
@@ -670,13 +902,9 @@ export default function App() {
           </div>
         </div>
 
-        <QuestionImage
-          image={currentQuestion.image}
-          alt={`Question ${current + 1} figure`}
-        />
-
-        <HighlightedStem
+        <InlineStemWithImage
           stem={currentQuestion.stem}
+          image={currentImageSrc}
           highlights={highlights[currentQuestion.id] || []}
           stemRef={stemRef}
           onMouseUp={handleStemMouseUp}
@@ -727,8 +955,12 @@ export default function App() {
             Previous
           </button>
 
-          <button onClick={nextQuestion} style={styles.primaryButton}>
-            {current < selectedQuestions.length - 1 ? "Next" : "Submit Test"}
+          <button onClick={goToNextQuestionOrFinishBlock} style={styles.primaryButton}>
+            {current < selectedQuestions.length - 1
+              ? "Next"
+              : mode === "full"
+              ? "Finish Block"
+              : "Submit Test"}
           </button>
         </div>
       </div>
@@ -750,8 +982,7 @@ const styles = {
   heroCard: {
     width: "100%",
     maxWidth: "950px",
-    background:
-      "linear-gradient(135deg, #ffffff 0%, #eef4ff 100%)",
+    background: "linear-gradient(135deg, #ffffff 0%, #eef4ff 100%)",
     borderRadius: "20px",
     padding: "40px 32px",
     boxShadow: "0 10px 35px rgba(0,0,0,0.08)",
@@ -798,11 +1029,6 @@ const styles = {
   },
   sectionTitle: {
     margin: 0,
-  },
-  subtitle: {
-    textAlign: "center",
-    color: "#666",
-    marginBottom: "24px",
   },
   controlsGrid: {
     display: "grid",
@@ -915,7 +1141,7 @@ const styles = {
   imageWrap: {
     display: "flex",
     justifyContent: "center",
-    marginBottom: "20px",
+    margin: "16px 0",
   },
   questionImage: {
     maxWidth: "100%",
