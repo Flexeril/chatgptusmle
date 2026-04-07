@@ -1,10 +1,16 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { questions as allQuestions } from "./questions";
 
+const SCORE_STORAGE_KEY = "chatgptusmle_attempt_history";
+
 function formatTime(totalSeconds) {
   const m = Math.floor(totalSeconds / 60);
   const s = totalSeconds % 60;
   return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+function formatTimestamp(timestamp) {
+  return new Date(timestamp).toLocaleString();
 }
 
 function shuffleArray(array) {
@@ -71,11 +77,7 @@ function HighlightedStem({ stem, highlights, stemRef, onMouseUp, style }) {
   let globalIndex = 0;
 
   return (
-    <div
-      ref={stemRef}
-      style={style}
-      onMouseUp={onMouseUp}
-    >
+    <div ref={stemRef} style={style} onMouseUp={onMouseUp}>
       {lines.map((line, lineIndex) => {
         const lineStart = globalIndex;
         const lineEnd = lineStart + line.length;
@@ -136,7 +138,18 @@ function HighlightedStem({ stem, highlights, stemRef, onMouseUp, style }) {
   );
 }
 
+function QuestionImage({ image, alt }) {
+  if (!image) return null;
+
+  return (
+    <div style={styles.imageWrap}>
+      <img src={image} alt={alt || "Question figure"} style={styles.questionImage} />
+    </div>
+  );
+}
+
 export default function App() {
+  const [screen, setScreen] = useState("home");
   const [blockSize, setBlockSize] = useState(5);
   const [subjectFilter, setSubjectFilter] = useState("All");
   const [started, setStarted] = useState(false);
@@ -149,6 +162,8 @@ export default function App() {
   const [answers, setAnswers] = useState({});
   const [highlights, setHighlights] = useState({});
   const [crossedOutChoices, setCrossedOutChoices] = useState({});
+  const [wasCancelled, setWasCancelled] = useState(false);
+  const [attemptHistory, setAttemptHistory] = useState([]);
 
   const stemRef = useRef(null);
 
@@ -161,6 +176,17 @@ export default function App() {
     if (subjectFilter === "All") return allQuestions;
     return allQuestions.filter((q) => q.subject === subjectFilter);
   }, [subjectFilter]);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(SCORE_STORAGE_KEY);
+      if (saved) {
+        setAttemptHistory(JSON.parse(saved));
+      }
+    } catch (error) {
+      console.error("Failed to load attempt history:", error);
+    }
+  }, []);
 
   useEffect(() => {
     if (!started || finished) return;
@@ -196,6 +222,37 @@ export default function App() {
 
   const actualBlockCount = Math.min(blockSize, filteredQuestions.length);
 
+  const saveAttempt = (cancelled) => {
+    const entry = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      timestamp: new Date().toISOString(),
+      score,
+      total: selectedQuestions.length,
+      subjectFilter,
+      blockSize: selectedQuestions.length,
+      cancelled,
+      unanswered: selectedQuestions.filter((q) => answers[q.id] == null).length,
+      timeRemaining: timeLeft,
+    };
+
+    const updated = [entry, ...attemptHistory].slice(0, 20);
+    setAttemptHistory(updated);
+
+    try {
+      localStorage.setItem(SCORE_STORAGE_KEY, JSON.stringify(updated));
+    } catch (error) {
+      console.error("Failed to save attempt history:", error);
+    }
+  };
+
+  const clearAttemptHistory = () => {
+    const confirmed = window.confirm("Clear all saved score history?");
+    if (!confirmed) return;
+
+    setAttemptHistory([]);
+    localStorage.removeItem(SCORE_STORAGE_KEY);
+  };
+
   const startTest = () => {
     const shuffled = shuffleArray(filteredQuestions);
     const chosen = shuffled.slice(0, actualBlockCount);
@@ -216,11 +273,13 @@ export default function App() {
     setFinished(false);
     setShowReview(false);
     setReviewMode("all");
+    setWasCancelled(false);
     setTimeLeft(chosen.length * 90);
     setStarted(true);
+    setScreen("test");
   };
 
-  const resetTest = () => {
+  const resetToHome = () => {
     setStarted(false);
     setFinished(false);
     setShowReview(false);
@@ -231,7 +290,26 @@ export default function App() {
     setAnswers({});
     setCurrent(0);
     setTimeLeft(0);
+    setWasCancelled(false);
+    setScreen("home");
   };
+
+  const cancelTest = () => {
+    const confirmed = window.confirm(
+      "End the test now? Any unanswered questions will be counted as incorrect."
+    );
+    if (!confirmed) return;
+
+    setWasCancelled(true);
+    setFinished(true);
+    setShowReview(false);
+  };
+
+  useEffect(() => {
+    if (!finished || !started) return;
+    saveAttempt(wasCancelled);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [finished]);
 
   const chooseAnswer = (letter) => {
     setAnswers((prev) => ({
@@ -335,13 +413,13 @@ export default function App() {
     }));
   };
 
-  if (!started) {
+  if (screen === "home") {
     return (
       <div style={styles.page}>
-        <div style={styles.card}>
-          <h1 style={styles.title}>Free 120 Style Mini Test</h1>
-          <p style={styles.subtitle}>
-            Randomized questions • answers hidden until end
+        <div style={styles.heroCard}>
+          <h1 style={styles.heroTitle}>ChatGPT USMLE</h1>
+          <p style={styles.heroSubtitle}>
+            Build Free 120-style timed blocks, review misses, and track recent performance.
           </p>
 
           <div style={styles.controlsGrid}>
@@ -386,16 +464,56 @@ export default function App() {
             <strong>{formatTime(actualBlockCount * 90)}</strong>
           </p>
 
-          <button
-            onClick={startTest}
-            style={{
-              ...styles.primaryButton,
-              ...(filteredQuestions.length === 0 ? styles.disabledButton : {}),
-            }}
-            disabled={filteredQuestions.length === 0}
-          >
-            Start Test
-          </button>
+          <div style={styles.buttonRow}>
+            <button
+              onClick={startTest}
+              style={{
+                ...styles.primaryButton,
+                ...(filteredQuestions.length === 0 ? styles.disabledButton : {}),
+              }}
+              disabled={filteredQuestions.length === 0}
+            >
+              Start New Block
+            </button>
+          </div>
+        </div>
+
+        <div style={styles.historyCard}>
+          <div style={styles.historyHeader}>
+            <h2 style={styles.sectionTitle}>Recent Attempts</h2>
+            {attemptHistory.length > 0 && (
+              <button onClick={clearAttemptHistory} style={styles.secondaryButton}>
+                Clear History
+              </button>
+            )}
+          </div>
+
+          {attemptHistory.length === 0 ? (
+            <p style={styles.emptyText}>No attempts saved yet.</p>
+          ) : (
+            <div style={styles.historyList}>
+              {attemptHistory.map((attempt) => (
+                <div key={attempt.id} style={styles.historyItem}>
+                  <div style={styles.historyTopRow}>
+                    <strong>
+                      {attempt.score}/{attempt.total}
+                    </strong>
+                    <span style={styles.historyTimestamp}>
+                      {formatTimestamp(attempt.timestamp)}
+                    </span>
+                  </div>
+                  <div style={styles.historyMeta}>
+                    <span>Subject: {attempt.subjectFilter}</span>
+                    <span>Block: {attempt.blockSize}</span>
+                    <span>
+                      Status: {attempt.cancelled ? "Cancelled early" : "Completed"}
+                    </span>
+                    <span>Unanswered: {attempt.unanswered}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     );
@@ -405,7 +523,9 @@ export default function App() {
     return (
       <div style={styles.page}>
         <div style={styles.card}>
-          <h1 style={styles.title}>Test Complete</h1>
+          <h1 style={styles.title}>
+            {wasCancelled ? "Test Ended Early" : "Test Complete"}
+          </h1>
           <p style={styles.result}>
             Score: {score} / {selectedQuestions.length}
           </p>
@@ -415,6 +535,11 @@ export default function App() {
           <p style={styles.info}>
             Missed: {missedQuestions.length} / {selectedQuestions.length}
           </p>
+          {wasCancelled && (
+            <p style={styles.warningText}>
+              Unanswered questions were counted as incorrect.
+            </p>
+          )}
 
           <div style={styles.controlsGrid}>
             <div style={styles.controlBox}>
@@ -438,8 +563,8 @@ export default function App() {
               {showReview ? "Hide Review" : "Show Review"}
             </button>
 
-            <button onClick={resetTest} style={styles.secondaryButton}>
-              New Block
+            <button onClick={resetToHome} style={styles.secondaryButton}>
+              Back to Home
             </button>
           </div>
         </div>
@@ -457,6 +582,8 @@ export default function App() {
                   <h2 style={styles.reviewTitle}>
                     Question {idx + 1} • {q.subject}
                   </h2>
+
+                  <QuestionImage image={q.image} alt={`Question ${idx + 1} figure`} />
 
                   <HighlightedStem
                     stem={q.stem}
@@ -504,6 +631,15 @@ export default function App() {
   return (
     <div style={styles.page}>
       <div style={styles.card}>
+        <div style={styles.topRow}>
+          <button onClick={resetToHome} style={styles.secondaryButton}>
+            Home
+          </button>
+          <button onClick={cancelTest} style={styles.dangerButton}>
+            Cancel Test
+          </button>
+        </div>
+
         <h2 style={styles.questionHeader}>
           Question {current + 1} of {selectedQuestions.length}
         </h2>
@@ -533,6 +669,11 @@ export default function App() {
             </button>
           </div>
         </div>
+
+        <QuestionImage
+          image={currentQuestion.image}
+          alt={`Question ${current + 1} figure`}
+        />
 
         <HighlightedStem
           stem={currentQuestion.stem}
@@ -604,6 +745,24 @@ const styles = {
     alignItems: "center",
     padding: "32px 16px",
     fontFamily: "Arial, sans-serif",
+    gap: "24px",
+  },
+  heroCard: {
+    width: "100%",
+    maxWidth: "950px",
+    background:
+      "linear-gradient(135deg, #ffffff 0%, #eef4ff 100%)",
+    borderRadius: "20px",
+    padding: "40px 32px",
+    boxShadow: "0 10px 35px rgba(0,0,0,0.08)",
+  },
+  historyCard: {
+    width: "100%",
+    maxWidth: "950px",
+    backgroundColor: "white",
+    borderRadius: "16px",
+    padding: "28px",
+    boxShadow: "0 8px 30px rgba(0,0,0,0.08)",
   },
   card: {
     width: "100%",
@@ -613,11 +772,32 @@ const styles = {
     padding: "32px",
     boxShadow: "0 8px 30px rgba(0,0,0,0.08)",
   },
+  topRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: "8px",
+  },
+  heroTitle: {
+    marginTop: 0,
+    marginBottom: "10px",
+    fontSize: "3rem",
+    textAlign: "center",
+  },
+  heroSubtitle: {
+    textAlign: "center",
+    color: "#555",
+    marginBottom: "28px",
+    fontSize: "1.1rem",
+  },
   title: {
     marginTop: 0,
     marginBottom: "8px",
     fontSize: "2.5rem",
     textAlign: "center",
+  },
+  sectionTitle: {
+    margin: 0,
   },
   subtitle: {
     textAlign: "center",
@@ -643,15 +823,64 @@ const styles = {
     fontSize: "1rem",
     borderRadius: "8px",
     border: "1px solid #ccc",
+    backgroundColor: "white",
   },
   info: {
     textAlign: "center",
     color: "#555",
   },
+  emptyText: {
+    color: "#666",
+    textAlign: "center",
+    marginBottom: 0,
+  },
+  warningText: {
+    textAlign: "center",
+    color: "#b45309",
+    fontWeight: "bold",
+  },
   result: {
     fontSize: "1.3rem",
     textAlign: "center",
     fontWeight: "bold",
+  },
+  historyHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: "12px",
+    marginBottom: "16px",
+    flexWrap: "wrap",
+  },
+  historyList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "12px",
+  },
+  historyItem: {
+    border: "1px solid #e5e7eb",
+    borderRadius: "12px",
+    padding: "14px 16px",
+    backgroundColor: "#fafafa",
+  },
+  historyTopRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: "12px",
+    flexWrap: "wrap",
+    marginBottom: "8px",
+  },
+  historyMeta: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "12px",
+    color: "#666",
+    fontSize: "0.95rem",
+  },
+  historyTimestamp: {
+    color: "#666",
+    fontSize: "0.95rem",
   },
   questionHeader: {
     textAlign: "center",
@@ -682,6 +911,19 @@ const styles = {
     alignItems: "center",
     justifyContent: "center",
     marginBottom: "20px",
+  },
+  imageWrap: {
+    display: "flex",
+    justifyContent: "center",
+    marginBottom: "20px",
+  },
+  questionImage: {
+    maxWidth: "100%",
+    maxHeight: "420px",
+    borderRadius: "12px",
+    border: "1px solid #ddd",
+    objectFit: "contain",
+    backgroundColor: "white",
   },
   stem: {
     whiteSpace: "normal",
@@ -742,6 +984,15 @@ const styles = {
     border: "1px solid #ccc",
     backgroundColor: "white",
     fontSize: "1rem",
+    cursor: "pointer",
+  },
+  dangerButton: {
+    padding: "10px 16px",
+    borderRadius: "10px",
+    border: "none",
+    backgroundColor: "#b91c1c",
+    color: "white",
+    fontSize: "0.95rem",
     cursor: "pointer",
   },
   disabledButton: {
