@@ -4,6 +4,18 @@ import { questions as allQuestions } from "./questions";
 const SCORE_STORAGE_KEY = "chatgptusmle_attempt_history";
 const FULL_EXAM_BLOCK_SIZE = 40;
 
+const UI_STORAGE_KEYS = {
+  navigatorCollapsed: "chatgptusmle_navigator_collapsed",
+  navigatorFilter: "chatgptusmle_navigator_filter",
+  calculatorPos: "chatgptusmle_calculator_pos",
+  labsPos: "chatgptusmle_labs_pos",
+  calculatorMinimized: "chatgptusmle_calculator_minimized",
+  labsMinimized: "chatgptusmle_labs_minimized",
+};
+
+const DEFAULT_CALCULATOR_POS = { x: 980, y: 110 };
+const DEFAULT_LABS_POS = { x: 980, y: 430 };
+
 const LAB_SECTIONS = [
   {
     title: "Serum / Chemistry",
@@ -74,6 +86,52 @@ const LAB_SECTIONS = [
   },
 ];
 
+function readStoredJson(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeStoredJson(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {}
+}
+
+function readStoredBool(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw == null) return fallback;
+    return raw === "true";
+  } catch {
+    return fallback;
+  }
+}
+
+function writeStoredBool(key, value) {
+  try {
+    localStorage.setItem(key, String(value));
+  } catch {}
+}
+
+function readStoredString(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeStoredString(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {}
+}
+
 function formatTime(totalSeconds) {
   const m = Math.floor(totalSeconds / 60);
   const s = totalSeconds % 60;
@@ -119,25 +177,17 @@ function getTextNodesIn(root) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const nodes = [];
   let node;
-
-  while ((node = walker.nextNode())) {
-    nodes.push(node);
-  }
-
+  while ((node = walker.nextNode())) nodes.push(node);
   return nodes;
 }
 
 function getAbsoluteOffset(root, targetNode, targetOffset) {
   const textNodes = getTextNodesIn(root);
   let total = 0;
-
   for (const node of textNodes) {
-    if (node === targetNode) {
-      return total + targetOffset;
-    }
+    if (node === targetNode) return total + targetOffset;
     total += node.textContent.length;
   }
-
   return total;
 }
 
@@ -154,7 +204,6 @@ function startIndexWithinSegment(absoluteIndex, baseOffset) {
 function StemTextSegment({ text, highlights, baseOffset }) {
   const merged = mergeHighlightRanges(highlights || []);
   const lines = text.split("\n");
-
   let localGlobalIndex = 0;
 
   return (
@@ -206,9 +255,7 @@ function StemTextSegment({ text, highlights, baseOffset }) {
           });
         }
 
-        if (pieces.length === 0) {
-          pieces.push({ type: "plain", text: "" });
-        }
+        if (pieces.length === 0) pieces.push({ type: "plain", text: "" });
 
         return (
           <div key={lineIndex}>
@@ -268,7 +315,93 @@ function InlineStemWithImage({
   );
 }
 
-function FloatingCalculator({ isOpen, onClose }) {
+function DraggablePanel({
+  title,
+  onClose,
+  position,
+  setPosition,
+  minimized,
+  setMinimized,
+  children,
+  width = 320,
+}) {
+  const dragState = useRef({
+    dragging: false,
+    offsetX: 0,
+    offsetY: 0,
+  });
+
+  const onMouseDown = (e) => {
+    dragState.current.dragging = true;
+    dragState.current.offsetX = e.clientX - position.x;
+    dragState.current.offsetY = e.clientY - position.y;
+    e.preventDefault();
+  };
+
+  useEffect(() => {
+    const onMouseMove = (e) => {
+      if (!dragState.current.dragging) return;
+      setPosition({
+        x: Math.max(8, e.clientX - dragState.current.offsetX),
+        y: Math.max(8, e.clientY - dragState.current.offsetY),
+      });
+    };
+
+    const onMouseUp = () => {
+      dragState.current.dragging = false;
+    };
+
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+  }, [setPosition]);
+
+  return (
+    <div
+      style={{
+        ...styles.draggablePanel,
+        width,
+        left: position.x,
+        top: position.y,
+      }}
+    >
+      <div style={styles.panelHeader} onMouseDown={onMouseDown}>
+        <h3 style={{ margin: 0, fontSize: "1rem" }}>{title}</h3>
+        <div style={styles.panelHeaderButtons}>
+          <button
+            onClick={() => setMinimized((v) => !v)}
+            style={styles.panelCloseButton}
+            onMouseDown={(e) => e.stopPropagation()}
+            title={minimized ? "Expand" : "Minimize"}
+          >
+            {minimized ? "▢" : "—"}
+          </button>
+          <button
+            onClick={onClose}
+            style={styles.panelCloseButton}
+            onMouseDown={(e) => e.stopPropagation()}
+            title="Close"
+          >
+            ×
+          </button>
+        </div>
+      </div>
+      {!minimized && children}
+    </div>
+  );
+}
+
+function FloatingCalculator({
+  isOpen,
+  onClose,
+  position,
+  setPosition,
+  minimized,
+  setMinimized,
+}) {
   const [display, setDisplay] = useState("");
 
   const appendValue = (value) => setDisplay((prev) => prev + value);
@@ -295,14 +428,15 @@ function FloatingCalculator({ isOpen, onClose }) {
   ];
 
   return (
-    <div style={styles.floatingCalculator}>
-      <div style={styles.panelHeader}>
-        <h3 style={{ margin: 0 }}>Calculator</h3>
-        <button onClick={onClose} style={styles.panelCloseButton}>
-          ×
-        </button>
-      </div>
-
+    <DraggablePanel
+      title="Calculator"
+      onClose={onClose}
+      position={position}
+      setPosition={setPosition}
+      minimized={minimized}
+      setMinimized={setMinimized}
+      width={320}
+    >
       <div style={styles.calculatorDisplay}>{display || "0"}</div>
 
       <div style={styles.calculatorGrid}>
@@ -328,24 +462,32 @@ function FloatingCalculator({ isOpen, onClose }) {
           =
         </button>
       </div>
-    </div>
+    </DraggablePanel>
   );
 }
 
-function FloatingLabs({ isOpen, onClose }) {
+function FloatingLabs({
+  isOpen,
+  onClose,
+  position,
+  setPosition,
+  minimized,
+  setMinimized,
+}) {
   const [openSection, setOpenSection] = useState("Serum / Chemistry");
 
   if (!isOpen) return null;
 
   return (
-    <div style={styles.floatingLabs}>
-      <div style={styles.panelHeader}>
-        <h3 style={{ margin: 0 }}>Reference Labs</h3>
-        <button onClick={onClose} style={styles.panelCloseButton}>
-          ×
-        </button>
-      </div>
-
+    <DraggablePanel
+      title="Reference Labs"
+      onClose={onClose}
+      position={position}
+      setPosition={setPosition}
+      minimized={minimized}
+      setMinimized={setMinimized}
+      width={430}
+    >
       <div style={styles.labsAccordion}>
         {LAB_SECTIONS.map((section) => (
           <div key={section.title}>
@@ -373,6 +515,82 @@ function FloatingLabs({ isOpen, onClose }) {
           </div>
         ))}
       </div>
+    </DraggablePanel>
+  );
+}
+
+function QuestionNavigator({
+  selectedQuestions,
+  answers,
+  flaggedQuestions,
+  current,
+  onGoToQuestion,
+  collapsed,
+  setCollapsed,
+  filter,
+  setFilter,
+}) {
+  const filteredQuestions = selectedQuestions
+    .map((q, index) => ({ q, index }))
+    .filter(({ q }) => {
+      if (filter === "all") return true;
+      if (filter === "unanswered") return answers[q.id] == null;
+      if (filter === "flagged") return !!flaggedQuestions[q.id];
+      return true;
+    });
+
+  return (
+    <div style={styles.navigatorContainer}>
+      <div style={styles.navigatorHeader}>
+        <div style={styles.navigatorHeaderLeft}>
+          <button
+            onClick={() => setCollapsed((v) => !v)}
+            style={styles.secondaryButton}
+          >
+            {collapsed ? "Show Navigator" : "Hide Navigator"}
+          </button>
+
+          {!collapsed && (
+            <select
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              style={styles.navigatorFilterSelect}
+            >
+              <option value="all">All</option>
+              <option value="unanswered">Unanswered</option>
+              <option value="flagged">Flagged</option>
+            </select>
+          )}
+        </div>
+      </div>
+
+      {!collapsed && (
+        <div style={styles.navigatorWrap}>
+          {filteredQuestions.map(({ q, index }) => {
+            const answered = answers[q.id] != null;
+            const flagged = !!flaggedQuestions[q.id];
+            const isCurrent = index === current;
+
+            return (
+              <button
+                key={q.id}
+                onClick={() => onGoToQuestion(index)}
+                style={{
+                  ...styles.navigatorButton,
+                  ...(answered
+                    ? styles.navigatorAnswered
+                    : styles.navigatorUnanswered),
+                  ...(flagged ? styles.navigatorFlagged : {}),
+                  ...(isCurrent ? styles.navigatorCurrent : {}),
+                }}
+                title={`Question ${index + 1}${flagged ? " • flagged" : ""}`}
+              >
+                {index + 1}
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -401,7 +619,9 @@ function BlockSummaryPage({
             Answered
           </div>
           <div style={styles.legendItem}>
-            <span style={{ ...styles.summaryChip, ...styles.summaryUnanswered }} />
+            <span
+              style={{ ...styles.summaryChip, ...styles.summaryUnanswered }}
+            />
             Unanswered
           </div>
           <div style={styles.legendItem}>
@@ -426,7 +646,9 @@ function BlockSummaryPage({
                 onClick={() => onGoToQuestion(index)}
                 style={{
                   ...styles.summaryQuestionButton,
-                  ...(answered ? styles.summaryAnswered : styles.summaryUnanswered),
+                  ...(answered
+                    ? styles.summaryAnswered
+                    : styles.summaryUnanswered),
                   ...(flagged ? styles.summaryFlaggedBorder : {}),
                   ...(current ? styles.summaryCurrentOutline : {}),
                 }}
@@ -482,7 +704,52 @@ export default function App() {
   const [calculatorOpen, setCalculatorOpen] = useState(false);
   const [labsOpen, setLabsOpen] = useState(false);
 
+  const [navigatorCollapsed, setNavigatorCollapsed] = useState(() =>
+    readStoredBool(UI_STORAGE_KEYS.navigatorCollapsed, false)
+  );
+  const [navigatorFilter, setNavigatorFilter] = useState(() =>
+    readStoredString(UI_STORAGE_KEYS.navigatorFilter, "all")
+  );
+
+  const [calculatorPos, setCalculatorPos] = useState(() =>
+    readStoredJson(UI_STORAGE_KEYS.calculatorPos, DEFAULT_CALCULATOR_POS)
+  );
+  const [labsPos, setLabsPos] = useState(() =>
+    readStoredJson(UI_STORAGE_KEYS.labsPos, DEFAULT_LABS_POS)
+  );
+
+  const [calculatorMinimized, setCalculatorMinimized] = useState(() =>
+    readStoredBool(UI_STORAGE_KEYS.calculatorMinimized, false)
+  );
+  const [labsMinimized, setLabsMinimized] = useState(() =>
+    readStoredBool(UI_STORAGE_KEYS.labsMinimized, false)
+  );
+
   const stemRef = useRef(null);
+
+  useEffect(() => {
+    writeStoredBool(UI_STORAGE_KEYS.navigatorCollapsed, navigatorCollapsed);
+  }, [navigatorCollapsed]);
+
+  useEffect(() => {
+    writeStoredString(UI_STORAGE_KEYS.navigatorFilter, navigatorFilter);
+  }, [navigatorFilter]);
+
+  useEffect(() => {
+    writeStoredJson(UI_STORAGE_KEYS.calculatorPos, calculatorPos);
+  }, [calculatorPos]);
+
+  useEffect(() => {
+    writeStoredJson(UI_STORAGE_KEYS.labsPos, labsPos);
+  }, [labsPos]);
+
+  useEffect(() => {
+    writeStoredBool(UI_STORAGE_KEYS.calculatorMinimized, calculatorMinimized);
+  }, [calculatorMinimized]);
+
+  useEffect(() => {
+    writeStoredBool(UI_STORAGE_KEYS.labsMinimized, labsMinimized);
+  }, [labsMinimized]);
 
   const subjects = useMemo(() => {
     const unique = [...new Set(allQuestions.map((q) => q.subject))];
@@ -1196,6 +1463,18 @@ export default function App() {
           </div>
         </div>
 
+        <QuestionNavigator
+          selectedQuestions={selectedQuestions}
+          answers={answers}
+          flaggedQuestions={flaggedQuestions}
+          current={current}
+          onGoToQuestion={setCurrent}
+          collapsed={navigatorCollapsed}
+          setCollapsed={setNavigatorCollapsed}
+          filter={navigatorFilter}
+          setFilter={setNavigatorFilter}
+        />
+
         <h2 style={styles.questionHeader}>
           Question {current + 1} of {selectedQuestions.length}
         </h2>
@@ -1315,10 +1594,21 @@ export default function App() {
 
       {screen === "test" && (
         <>
-          <FloatingLabs isOpen={labsOpen} onClose={() => setLabsOpen(false)} />
+          <FloatingLabs
+            isOpen={labsOpen}
+            onClose={() => setLabsOpen(false)}
+            position={labsPos}
+            setPosition={setLabsPos}
+            minimized={labsMinimized}
+            setMinimized={setLabsMinimized}
+          />
           <FloatingCalculator
             isOpen={calculatorOpen}
             onClose={() => setCalculatorOpen(false)}
+            position={calculatorPos}
+            setPosition={setCalculatorPos}
+            minimized={calculatorMinimized}
+            setMinimized={setCalculatorMinimized}
           />
         </>
       )}
@@ -1472,6 +1762,54 @@ const styles = {
   historyTimestamp: {
     color: "#666",
     fontSize: "0.95rem",
+  },
+  navigatorContainer: {
+    marginBottom: "18px",
+  },
+  navigatorHeader: {
+    display: "flex",
+    justifyContent: "center",
+    marginBottom: "10px",
+  },
+  navigatorHeaderLeft: {
+    display: "flex",
+    gap: "10px",
+    flexWrap: "wrap",
+    alignItems: "center",
+  },
+  navigatorFilterSelect: {
+    padding: "10px 14px",
+    fontSize: "1rem",
+    borderRadius: "8px",
+    border: "1px solid #ccc",
+    backgroundColor: "white",
+  },
+  navigatorWrap: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "8px",
+    justifyContent: "center",
+  },
+  navigatorButton: {
+    minWidth: "38px",
+    height: "38px",
+    borderRadius: "10px",
+    border: "1px solid #d1d5db",
+    cursor: "pointer",
+    fontWeight: "bold",
+  },
+  navigatorAnswered: {
+    backgroundColor: "#dcfce7",
+  },
+  navigatorUnanswered: {
+    backgroundColor: "#fee2e2",
+  },
+  navigatorFlagged: {
+    border: "2px solid #f59e0b",
+  },
+  navigatorCurrent: {
+    outline: "2px solid #2563eb",
+    outlineOffset: "2px",
   },
   questionHeader: {
     textAlign: "center",
@@ -1678,37 +2016,29 @@ const styles = {
     fontSize: "1rem",
     lineHeight: 1.6,
   },
-  floatingLabs: {
+  draggablePanel: {
     position: "fixed",
-    top: "88px",
-    right: "20px",
-    width: "420px",
+    backgroundColor: "white",
+    border: "1px solid #d1d5db",
+    borderRadius: "16px",
+    padding: "14px",
+    boxShadow: "0 12px 30px rgba(0,0,0,0.18)",
+    zIndex: 950,
     maxHeight: "72vh",
     overflowY: "auto",
-    backgroundColor: "white",
-    border: "1px solid #d1d5db",
-    borderRadius: "16px",
-    padding: "14px",
-    boxShadow: "0 12px 30px rgba(0,0,0,0.18)",
-    zIndex: 900,
-  },
-  floatingCalculator: {
-    position: "fixed",
-    top: "88px",
-    right: "460px",
-    width: "320px",
-    backgroundColor: "white",
-    border: "1px solid #d1d5db",
-    borderRadius: "16px",
-    padding: "14px",
-    boxShadow: "0 12px 30px rgba(0,0,0,0.18)",
-    zIndex: 901,
   },
   panelHeader: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: "12px",
+    cursor: "move",
+    userSelect: "none",
+  },
+  panelHeaderButtons: {
+    display: "flex",
+    gap: "8px",
+    alignItems: "center",
   },
   panelCloseButton: {
     border: "1px solid #d1d5db",
