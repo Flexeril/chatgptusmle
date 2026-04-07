@@ -570,7 +570,7 @@ export default function App() {
     return (
       <div style={styles.page}>
         <div style={styles.heroCard}>
-          <h1 style={styles.heroTitle}>ChatGPT USMLE</h1>
+          <h1 style={styles.heroTitle}>2021 USMLE Free 120</h1>
           <p style={styles.heroSubtitle}>
             Build Free 120-style timed blocks, full-length exams, review misses,
             and track recent performance.

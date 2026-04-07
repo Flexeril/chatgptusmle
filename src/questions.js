@@ -1709,6 +1709,42 @@ Which of the following is the most likely diagnosis?`,
     explanation: "The tumor suppressor protein p53 normally induces cell cycle arrest at the G1/S checkpoint in response to DNA damage (like radiation) to allow for repair or apoptosis. [cite: 5175-5185]",
   },
   {
+    id: 90,
+    subject: "Microbiology",
+    system: "Genitourinary",
+    difficulty: "Medium",
+    tags: ["Schistosomiasis", "Hematuria", "Bladder calcification"],
+    hasImage: false,
+    stem: `A 28-year-old man comes to the physician because of a 1-year history of pain with urination that has increased in severity during the past month. He also has had episodes of blood in his urine during the past 5 years. He lived in sub-Saharan Africa until he came to the USA 6 months ago for graduate school. His temperature is 38°C (100.4°F), pulse is 80/min, respirations are 16/min, and blood pressure is 110/84 mm Hg. Physical examination shows suprapubic tenderness. Laboratory studies show:
+
+Hemoglobin: 12.3 g/dL
+Hematocrit: 37%
+Leukocyte count: 13,400/mm³
+Segmented neutrophils: 65%
+Bands: 5%
+Eosinophils: 5%
+Lymphocytes: 22%
+Monocytes: 3%
+Serum Urea nitrogen: 75 mg/dL
+Serum Creatinine: 3.8 mg/dL
+Urine Blood: 3+
+Urine RBC: 200/hpf
+Urine WBC: 100/hpf
+RBC casts: absent
+WBC casts: absent
+
+Imaging studies show bilateral hydroureter and hydronephrosis and foci of calcification in the region of the bladder. A biopsy specimen of the bladder shows marked chronic inflammation with fibrosis and scattered granulomas. Which of the following best explains the biopsy findings?`,
+    options: {
+      A: "Exposure to a chemical toxin",
+      B: "Interstitial cystitis",
+      C: "Malacoplakia",
+      D: "Schistosomiasis",
+      E: "Vesicoureteral reflux",
+    },
+    answer: "D",
+    explanation: "Chronic hematuria, eosinophilia, and characteristic calcifications in the bladder in a patient from sub-Saharan Africa are classic for infection by Schistosoma haematobium.  [cite: 1342-1385, 3814]",
+  },
+  {
     id: 91,
     subject: "Genetics",
     system: "Hematology",
